@@ -16,7 +16,7 @@ export default function LandingPage() {
       <img
         src={starsImage}
         alt="stars decoration"
-        className="absolute top-4 right-4 w-32 h-32 object-contain opacity-60"
+        className="absolute top-[10%] right-[15%] w-[20vw] h-[20vw] object-contain opacity-70"
       />
       <div className="flex flex-col items-center justify-center gap-12 px-8">
         <h1
