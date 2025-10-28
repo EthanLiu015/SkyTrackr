@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import requests
 import os
 
 # Get the absolute path of the directory where the script is located
@@ -8,13 +9,12 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # Construct absolute paths for the data files
 star_data_path = os.path.join(script_dir, "star_data.csv")
 star_name_data_path = os.path.join(script_dir, "star_name_data.json")
-hd_cross_reference = os.path.join(script_dir, "star_name_cross_reference.csv")
+hd_cross_reference_path = os.path.join(script_dir, "unique_bayer_cst_values.csv")
 
 ## read our two files
 stars_df = pd.read_csv(star_data_path)
 star_names_df = pd.read_json(star_name_data_path)
-hd_cross_reference_df = pd.read_csv(hd_cross_reference)
-print(star_names_df)
+hd_cross_reference_df = pd.read_csv(hd_cross_reference_path)
 
 ####################################################################
 ############# FEATURE ENGINEER DISPLAY NAME COL ####################
