@@ -1,10 +1,6 @@
-import { Button } from "../components/ui/button";
+import { Button } from "../components/ui/button.tsx";
 import { ArrowRight } from "lucide-react";
 import starsImage from "../assets/images/constellation_stars.png";
-
-interface LandingPageProps {
-  onStartJourney: () => void;
-}
 
 // Import Google Fonts
 const fontLink = document.createElement("link");
@@ -13,7 +9,7 @@ fontLink.href =
 fontLink.rel = "stylesheet";
 document.head.appendChild(fontLink);
 
-export default function LandingPage({ onStartJourney }: LandingPageProps) {
+export default function LandingPage() {
   return (
     <div className="relative w-screen h-screen bg-[#1a1a1a] overflow-hidden flex items-center justify-center">
       {/* Sparkle decoration in top right corner */}
@@ -42,7 +38,6 @@ export default function LandingPage({ onStartJourney }: LandingPageProps) {
         <Button
           size="lg"
           className="bg-blue-600 hover:bg-blue-700 text-white px-[4.438rem] py-9 gap-4 transition-all hover:scale-105 text-xl"
-          onClick={onStartJourney}
           style={{
             boxShadow: `
               0 0 15px rgba(96, 165, 250, 0.6),
