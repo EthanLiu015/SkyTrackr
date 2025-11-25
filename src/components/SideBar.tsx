@@ -1,4 +1,4 @@
-import { Home, Compass, Star, Settings, Info, Search } from "lucide-react";
+import { Home, Compass, Star, Settings, Info, Search, Cloud } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -9,17 +9,23 @@ import {
 interface SideNavProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onNavigate?: (view: "sky" | "conditions") => void;
 }
 
-export function SideNav({ open, onOpenChange }: SideNavProps) {
+export function SideNav({ open, onOpenChange, onNavigate }: SideNavProps) {
   const navItems = [
-    { icon: Home, label: "Home", href: "#" },
-    { icon: Search, label: "Search Sky", href: "#" },
-    { icon: Compass, label: "Navigate", href: "#" },
-    { icon: Star, label: "Favorites", href: "#" },
-    { icon: Settings, label: "Settings", href: "#" },
-    { icon: Info, label: "About", href: "#" },
+    { icon: Home, label: "Home", view: "sky" as const },
+    { icon: Search, label: "Search Sky", view: "sky" as const },
+    { icon: Compass, label: "Navigate", view: "sky" as const },
+    { icon: Star, label: "Favorites", view: "sky" as const },
+    { icon: Cloud, label: "Conditions", view: "conditions" as const },
+    { icon: Settings, label: "Settings", view: "sky" as const },
+    { icon: Info, label: "About", view: "sky" as const },
   ];
+
+  const handleNavClick = (view: "sky" | "conditions") => {
+    onNavigate?.(view);
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -35,14 +41,14 @@ export function SideNav({ open, onOpenChange }: SideNavProps) {
         
         <nav className="mt-8 flex flex-col gap-2">
           {navItems.map((item) => (
-            <a
+            <button
               key={item.label}
-              href={item.href}
-              className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-gray-800 hover:text-white rounded-md transition-colors"
+              onClick={() => handleNavClick(item.view)}
+              className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-gray-800 hover:text-white rounded-md transition-colors text-left w-full"
             >
               <item.icon className="h-5 w-5" />
               <span>{item.label}</span>
-            </a>
+            </button>
           ))}
         </nav>
       </SheetContent>
