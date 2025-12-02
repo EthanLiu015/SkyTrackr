@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { MenuBar } from "../components/MenuBar";
 import { SideNav } from "../components/SideBar";
-import { SkyDisplay } from "./SkyDisplay";
+import { SkyDisplay } from "../components/SkyDisplay";
 import { ConditionsDisplay } from "./ConditionsDisplay";
 
 export default function Display() {
