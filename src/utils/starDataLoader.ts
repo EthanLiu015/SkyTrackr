@@ -62,9 +62,9 @@ export async function loadStarData(): Promise<Star[]> {
     
     console.log(`Loaded ${stars.length} stars before filtering`);
     
-    // Sort by magnitude (brightness) and take the 600 brightest
+    // Sort by magnitude (brightness) and take the 100 brightest
     stars.sort((a, b) => a.Vmag - b.Vmag);
-    const brightestStars = stars.slice(0, 600);
+    const brightestStars = stars.slice(0, 200);
     console.log(`Using ${brightestStars.length} brightest stars`);
     
     return brightestStars;
@@ -77,17 +77,58 @@ export async function loadStarData(): Promise<Star[]> {
 export function celestialToCartesian(
   ra: number, // Right Ascension in degrees (0-360)
   dec: number, // Declination in degrees (-90 to +90)
-  distance: number = 1
+  distance: number = 1,
+  latitude: number = 0, // Observer latitude in degrees
+  longitude: number = 0, // Observer longitude in degrees
+  lstHours: number = 0 // Local Sidereal Time in hours
 ): [number, number, number] {
-  // Convert to radians
+  // Convert RA from hours to degrees if needed, but it's already in degrees
   const raRad = (ra * Math.PI) / 180;
   const decRad = (dec * Math.PI) / 180;
+  const latRad = (latitude * Math.PI) / 180;
+  const lonRad = (longitude * Math.PI) / 180;
   
-  // Convert celestial coordinates to Cartesian coordinates
-  const x = distance * Math.cos(decRad) * Math.cos(raRad);
-  const y = distance * Math.sin(decRad);
-  const z = distance * Math.cos(decRad) * Math.sin(raRad);
+  // Convert LST from hours to degrees, then to radians
+  const lstDeg = lstHours * 15; // 15 degrees per hour
+  const lstRad = (lstDeg * Math.PI) / 180;
+
+  // Compute Hour Angle (HA = LST - RA), normalized to [-π, π]
+  let hourAngle = lstRad - raRad;
   
+  // Normalize hour angle to [-π, π]
+  while (hourAngle > Math.PI) hourAngle -= 2 * Math.PI;
+  while (hourAngle < -Math.PI) hourAngle += 2 * Math.PI;
+
+  // Compute Altitude: sin(Alt) = sin(Dec) sin(lat) + cos(Dec) cos(lat) cos(HA)
+  const sinAlt = Math.sin(decRad) * Math.sin(latRad) + 
+                 Math.cos(decRad) * Math.cos(latRad) * Math.cos(hourAngle);
+  const altitude = Math.asin(sinAlt);
+  const cosAlt = Math.cos(altitude);
+
+  // Compute Azimuth: Az = atan2(-cos(Dec) sin(HA) / cos(Alt), (sin(Dec) - sin(Alt) sin(lat)) / (cos(Alt) cos(lat)))
+  const numerator = -Math.cos(decRad) * Math.sin(hourAngle) / cosAlt;
+  const denominator = (Math.sin(decRad) - sinAlt * Math.sin(latRad)) / (cosAlt * Math.cos(latRad));
+  let azimuth = Math.atan2(numerator, denominator);
+  
+  // Normalize azimuth to [0, 2π]
+  if (azimuth < 0) azimuth += 2 * Math.PI;
+
+  // Convert Alt/Az to ENU (East-North-Up) unit vector
+  // x = cos(Alt) sin(Az)  (East)
+  // y = sin(Alt)          (Up)
+  // z = cos(Alt) cos(Az)  (North)
+  const sinAz = Math.sin(azimuth);
+  const cosAz = Math.cos(azimuth);
+  
+  const x_enu = cosAlt * sinAz;   // East
+  const y_enu = sinAlt;            // Up
+  const z_enu = cosAlt * cosAz;    // North
+
+  // Convert ENU to Three.js world coordinates: east→x, up→y, north→−z
+  const x = distance * x_enu;      // East
+  const y = distance * y_enu;      // Up (Zenith)
+  const z = -distance * z_enu;     // Negative North (so North is negative Z in Three.js)
+
   return [x, y, z];
 }
 
