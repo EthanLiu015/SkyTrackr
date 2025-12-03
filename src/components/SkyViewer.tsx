@@ -150,11 +150,52 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           vertexColors: true,
         });
         const skySphere = new THREE.Mesh(skyGeometry, skyMaterial);
+        skySphere.rotation.y = Math.PI / 2; // Rotate to hide the texture seam from E-W axis
         scene.add(skySphere);
 
-        // Add ambient light so the ground is slightly visible
-        const ambientLight = new THREE.AmbientLight(0x1a1a2e, 0.3);
-        scene.add(ambientLight);
+        // Use a HemisphereLight for more natural outdoor ambient lighting.
+        // Sky color, ground color, intensity
+        const hemisphereLight = new THREE.HemisphereLight(0x404060, 0x104010, 1.0);
+        scene.add(hemisphereLight);
+
+        // Create a procedural grass texture for a more realistic ground
+        const grassCanvas = document.createElement('canvas');
+        const canvasSize = 512;
+        grassCanvas.width = canvasSize;
+        grassCanvas.height = canvasSize;
+        const grassCtx = grassCanvas.getContext('2d');
+        if (grassCtx) {
+          // Base color for soil/dark grass
+          grassCtx.fillStyle = '#002a00';
+          grassCtx.fillRect(0, 0, canvasSize, canvasSize);
+
+          // Add thousands of small "blades" of grass with color variation
+          for (let i = 0; i < 40000; i++) {
+            const x = Math.random() * canvasSize;
+            const y = Math.random() * canvasSize;
+            const height = Math.random() * 10 + 5;
+            const width = Math.random() * 1.5 + 0.5;
+            // Varying shades of green, with a small chance of brown/yellow
+            const greenShade = Math.floor(Math.random() * 50 + 40);
+            grassCtx.fillStyle = Math.random() < 0.05 ? `rgb(${greenShade + 20}, ${greenShade + 10}, 10)` : `rgb(0, ${greenShade}, 0)`;
+            grassCtx.fillRect(x, y, width, height);
+          }
+        }
+        const grassTexture = new THREE.CanvasTexture(grassCanvas);
+        grassTexture.wrapS = THREE.RepeatWrapping;
+        grassTexture.wrapT = THREE.RepeatWrapping;
+        grassTexture.repeat.set(16, 16); // Repeat the texture across the ground
+
+        const groundGeometry = new THREE.CircleGeometry(200, 64);
+        const groundMaterial = new THREE.MeshPhongMaterial({
+          map: grassTexture, // Apply the procedural grass texture
+          side: THREE.DoubleSide,
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        ground.position.y = -0.5; // Position below the camera
+        scene.add(ground);
+        console.log('Textured ground added to scene');
 
         // Create camera at the center (ground level perspective)
         const width = containerRef.current.clientWidth;
@@ -341,19 +382,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         scene.add(starGlowMesh); // Add glow mesh first
         starMeshRef.current = starMesh;
         scene.add(starMesh);
-        console.log('Stars added to scene');
-        const groundGeometry = new THREE.CircleGeometry(200, 64);
-        const groundMaterial = new THREE.MeshPhongMaterial({
-          color: 0x003300, // A dark green for grass at night
-          emissive: 0x001100, // A very dark green emissive color
-          flatShading: false,
-          side: THREE.DoubleSide, // Render both sides to ensure visibility
-        }); 
-        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-        ground.rotation.x = Math.PI / 2; // Rotate to be horizontal
-        ground.position.y = -0.5; // Position below the camera
-        scene.add(ground);
-        console.log('Ground added to scene');
 
         // Create directional indicators (N, S, E, W)
         const canvas = document.createElement('canvas');
@@ -371,7 +399,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const directionGeometry = new THREE.PlaneGeometry(15, 15);
         
         // Create N indicator
-        const northSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: northTexture, transparent: true }));
+        const northSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: northTexture, transparent: true, alphaTest: 0.5 }));
         northSign.position.set(0, 8, -85);
         northSign.lookAt(camera.position);
         scene.add(northSign);
@@ -389,7 +417,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           ctx2.fillText('S', 128, 128);
         }
         const southTexture = new THREE.CanvasTexture(canvas2);
-        const southSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: southTexture, transparent: true }));
+        const southSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: southTexture, transparent: true, alphaTest: 0.5 }));
         southSign.position.set(0, 8, 70);
         southSign.lookAt(camera.position);
         scene.add(southSign);
@@ -407,7 +435,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           ctx3.fillText('E', 128, 128);
         }
         const eastTexture = new THREE.CanvasTexture(canvas3);
-        const eastSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: eastTexture, transparent: true }));
+        const eastSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: eastTexture, transparent: true, alphaTest: 0.5 }));
         eastSign.position.set(70, 8, 0);
         eastSign.lookAt(camera.position);
         scene.add(eastSign);
@@ -425,7 +453,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           ctx4.fillText('W', 128, 128);
         }
         const westTexture = new THREE.CanvasTexture(canvas4);
-        const westSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: westTexture, transparent: true }));
+        const westSign = new THREE.Mesh(directionGeometry, new THREE.MeshBasicMaterial({ map: westTexture, transparent: true, alphaTest: 0.5 }));
         westSign.position.set(-70, 8, 0);
         westSign.lookAt(camera.position);
         scene.add(westSign);
