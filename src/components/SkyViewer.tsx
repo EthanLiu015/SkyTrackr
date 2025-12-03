@@ -129,8 +129,28 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const scene = new THREE.Scene();
         sceneRef.current = scene;
 
-        // Set background to black space
-        scene.background = new THREE.Color(0x000000);
+        // Create a gradient sky sphere
+        const skyGeometry = new THREE.SphereGeometry(500, 32, 16);
+        const skyPositions = skyGeometry.attributes.position;
+        const skyColors = [];
+        const colorTop = new THREE.Color(0x05040f); // Very Dark Indigo/Almost Black
+        const colorBottom = new THREE.Color(0x1a1833); // Darker Indigo for horizon
+
+        for (let i = 0; i < skyPositions.count; i++) {
+          const vertex = new THREE.Vector3().fromBufferAttribute(skyPositions, i);
+          // Normalize y-coordinate to a 0-1 range (bottom to top)
+          const t = (vertex.y + 500) / 1000;
+          const blendedColor = colorBottom.clone().lerp(colorTop, t);
+          skyColors.push(blendedColor.r, blendedColor.g, blendedColor.b);
+        }
+        skyGeometry.setAttribute('color', new THREE.Float32BufferAttribute(skyColors, 3));
+
+        const skyMaterial = new THREE.MeshBasicMaterial({
+          side: THREE.BackSide, // Render the inside of the sphere
+          vertexColors: true,
+        });
+        const skySphere = new THREE.Mesh(skyGeometry, skyMaterial);
+        scene.add(skySphere);
 
         // Add ambient light so the ground is slightly visible
         const ambientLight = new THREE.AmbientLight(0x1a1a2e, 0.3);
@@ -149,7 +169,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(width, height);
         renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setClearColor(0x000000);
         containerRef.current.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
@@ -267,7 +286,8 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             void main() {
               vColor = color;
               vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-              gl_PointSize = size * (1000.0 / -mvPosition.z);
+              // Using (size * size) increases the contrast, making bright stars much larger than dim ones.
+              gl_PointSize = size * (1500.0 / -mvPosition.z);
               gl_Position = projectionMatrix * mvPosition;
             }
           `,
@@ -298,21 +318,18 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             void main() {
               vColor = color;
               vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-              // Make glow larger than the core star, e.g., 5x its size
-              gl_PointSize = size * 5.0 * (1000.0 / -mvPosition.z);
+              // Increased multipliers to make the glow larger and more prominent.
+              gl_PointSize = size * sqrt(size) * 3.5 * (1500.0 / -mvPosition.z);
               gl_Position = projectionMatrix * mvPosition;
             }
           `,
           fragmentShader: `
-            uniform sampler2D map;
             varying vec3 vColor;
             void main() {
-              float dist = distance(gl_PointCoord, vec2(0.5, 0.5));
-              // Create a soft, fading glow effect
-              // smoothstep(edge0, edge1, x) returns 0.0 if x <= edge0, 1.0 if x >= edge1, and smoothly interpolates otherwise.
-              // Here, it fades from 1.0 at center (dist=0) to 0.0 at edge (dist=0.5)
-              float alpha = smoothstep(0.5, 0.0, dist);
-              gl_FragColor = vec4(vColor, alpha * 0.2); // Adjust 0.2 for desired glow intensity
+              // Create a soft, procedural glow that fades out from the center.
+              float dist = distance(gl_PointCoord, vec2(0.5));
+              float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
+              gl_FragColor = vec4(vColor, alpha * 0.35); // Adjust 0.35 for desired glow intensity
             }
           `,
           blending: THREE.AdditiveBlending, // Crucial for glow effect
@@ -543,6 +560,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           containerRef.current?.removeEventListener('mouseleave', handleMouseUp);
           containerRef.current?.removeEventListener('wheel', handleWheel);
           renderer.dispose();
+          skyGeometry.dispose();
           starGeometry.dispose();
           starGlowMaterial.dispose(); // Dispose the new material
           starMaterial2.dispose();
