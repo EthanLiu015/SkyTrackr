@@ -142,7 +142,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         console.log(`Container size: ${width}x${height}`);
         
         const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 10000);
-        camera.position.set(0, 0, 0); // Place camera at center (observer at ground)
+        camera.position.set(0, 1.6, 0); // Place camera at an average eye-level height
         cameraRef.current = camera;
 
         // Create renderer
@@ -281,7 +281,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           `,
           blending: THREE.NormalBlending,
           depthTest: true,
-          depthWrite: false,
+          depthWrite: true, // Write depth for core stars to be occluded correctly
           transparent: true,
         });
 
@@ -316,7 +316,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             }
           `,
           blending: THREE.AdditiveBlending, // Crucial for glow effect
-          depthTest: false, // Don't test against depth buffer for glow
+          depthTest: true, // Test against depth buffer to be occluded by ground/other stars
           depthWrite: false, // Don't write to depth buffer for glow
           transparent: true,
         });
@@ -327,11 +327,11 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         console.log('Stars added to scene');
         const groundGeometry = new THREE.CircleGeometry(200, 64);
         const groundMaterial = new THREE.MeshPhongMaterial({
-          color: 0x1a1a2e,
-          emissive: 0x0a0a1a,
+          color: 0x003300, // A dark green for grass at night
+          emissive: 0x001100, // A very dark green emissive color
           flatShading: false,
-          side: THREE.BackSide,
-        });
+          side: THREE.DoubleSide, // Render both sides to ensure visibility
+        }); 
         const ground = new THREE.Mesh(groundGeometry, groundMaterial);
         ground.rotation.x = Math.PI / 2; // Rotate to be horizontal
         ground.position.y = -0.5; // Position below the camera
@@ -524,8 +524,8 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           );
 
           if (cameraRef.current) {
-            cameraRef.current.position.set(0, 0, 0);
-            cameraRef.current.lookAt(lookAtPoint);
+            cameraRef.current.position.set(0, 1.6, 0);
+            cameraRef.current.lookAt(lookAtPoint.add(cameraRef.current.position));
           }
 
           renderer.render(scene, cameraRef.current!);

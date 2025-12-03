@@ -64,7 +64,7 @@ export async function loadStarData(): Promise<Star[]> {
     
     // Sort by magnitude (brightness) and take the 100 brightest
     stars.sort((a, b) => a.Vmag - b.Vmag);
-    const brightestStars = stars.slice(0, 200);
+    const brightestStars = stars.slice(0, 300);
     console.log(`Using ${brightestStars.length} brightest stars`);
     
     return brightestStars;
