@@ -1,27 +1,64 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import * as THREE from 'three';
-import { loadStarData, celestialToCartesian, magnitudeToSize, type Star } from '../utils/starDataLoader';
-import { getUserLocation } from '../utils/geolocation';
-import { StarSearch } from './StarSearch';
+import { loadStarData, magnitudeToSize, type Star } from '../utils/starDataLoader';
+import { getUserLocation, type UserLocation } from '../utils/geolocation';
+import { calculateAltAz } from '../utils/astroUtils';
 
-interface SkyViewerProps {
-  onSearchStar?: (star: Star | null) => void;
+export interface SkyViewerHandles {
+  searchForStar: (starName: string) => void;
 }
 
-export function SkyViewer({ onSearchStar }: SkyViewerProps) {
+interface SkyViewerProps {
+  searchedStarName?: string | null;
+  onStarDataLoaded?: (starNames: string[]) => void;
+}
+
+interface StarAltAz {
+  altitude: number;
+  azimuth: number;
+}
+
+/**
+ * Converts horizontal coordinates (Altitude/Azimuth) to Cartesian for Three.js.
+ * Assumes an ENU (East-North-Up) to Three.js coordinate system mapping.
+ * @param alt - Altitude in degrees.
+ * @param az - Azimuth in degrees.
+ * @param radius - The distance from the origin.
+ * @returns A 3D vector {x, y, z}.
+ */
+function altAzToCartesian(alt: number, az: number, radius: number): { x: number; y: number; z: number } {
+  const altRad = (alt * Math.PI) / 180;
+  const azRad = (az * Math.PI) / 180;
+
+  // Convert Alt/Az to ENU (East-North-Up)
+  // x = cos(Alt) * sin(Az)  (East)
+  // y = sin(Alt)            (Up)
+  // z = cos(Alt) * cos(Az)  (North)
+  const x_enu = radius * Math.cos(altRad) * Math.sin(azRad);
+  const y_enu = radius * Math.sin(altRad);
+  const z_enu = radius * Math.cos(altRad) * Math.cos(azRad);
+
+  // Convert ENU to Three.js world coordinates: east→x, up→y, north→−z
+  const x = x_enu;
+  const y = y_enu;
+  const z = -z_enu;
+  return { x, y, z };
+}
+
+export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function SkyViewerComponent({ searchedStarName, onStarDataLoaded }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const starsRef = useRef<Map<number, Star>>(new Map());
   const starsByNameRef = useRef<Map<string, Star>>(new Map());
+  const starAltAzRef = useRef<Map<number, StarAltAz>>(new Map());
   const starMeshRef = useRef<THREE.Points | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
-  const [availableStarNames, setAvailableStarNames] = useState<string[]>([]);
+  const [hoveredStarAltAz, setHoveredStarAltAz] = useState<StarAltAz | null>(null);
   const searchedStarRef = useRef<Star | null>(null);
-  
   // Store observer location for coordinate transformations
   const observerRef = useRef({
     latitude: 0,
@@ -38,21 +75,50 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
     fov: 75, // Field of view for zoom control
   });
 
+  // Expose searchForStar method through ref
+  useImperativeHandle(ref, () => ({
+    searchForStar: (starName: string) => {
+      const star = starsByNameRef.current.get(starName.toLowerCase());
+      if (star && cameraRef.current && observerRef.current) {
+        const altAz = calculateAltAz(
+          { ra: star.RAJ2000, dec: star.DEJ2000 },
+          { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
+          new Date()
+        );
+        
+        // Calculate spherical coordinates from the star's Alt/Az
+        const altRad = (altAz.altitude * Math.PI) / 180;
+        const azRad = (altAz.azimuth * Math.PI) / 180;
+
+        // phi is the vertical angle from zenith (Up), theta is horizontal from North
+        cameraControlRef.current.phi = Math.PI / 2 - altRad; // 90 degrees - altitude
+        cameraControlRef.current.theta = azRad;
+        
+        // Zoom in on the star
+        cameraControlRef.current.fov = 30;
+        cameraRef.current.fov = 30;
+        cameraRef.current.updateProjectionMatrix();
+        
+        console.log(`Navigating to ${star.display_name}`);
+      }
+    }
+  }), []);
+
   useEffect(() => {
     const initScene = async () => {
       if (!containerRef.current) return;
 
       try {
         // Get user location
-        const location = await getUserLocation();
+        const location: UserLocation = await getUserLocation();
         console.log('User location:', location);
 
         // Load star data
         const stars = await loadStarData();
         console.log(`Loaded ${stars.length} brightest stars`);
         
-        // Populate available star names for search autocomplete
-        setAvailableStarNames(stars.map(star => star.display_name));
+        // Pass available star names to parent component
+        onStarDataLoaded?.(stars.map(star => star.display_name));
         
         if (stars.length === 0) {
           console.error('No stars loaded!');
@@ -93,82 +159,68 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
         const starSizes: number[] = [];
         const starColors: number[] = [];
 
-        // Calculate Local Sidereal Time more accurately
+        // Get current time and observer location
         const now = new Date();
-        const utcTime = now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
-        
-        // Calculate Julian Day Number at 0h UT
-        const year = now.getUTCFullYear();
-        const month = now.getUTCMonth() + 1;
-        const day = now.getUTCDate();
-        let a = Math.floor((14 - month) / 12);
-        let y = year + 4800 - a;
-        let m = month + 12 * a - 3;
-        const JDN = day + Math.floor((153 * m + 2) / 5) + 365 * y + Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
-        const JD = JDN + (utcTime / 24);
-        
-        // Greenwich Mean Sidereal Time in seconds
-        const T = (JD - 2451545.0) / 36525;
-        const GMST_sec = 67310.54841 + (876600 * 3600 + 8640184.812866) * T + 0.093104 * T * T - 6.2e-6 * T * T * T;
-        const GMST_hours = (GMST_sec / 3600) % 24;
-        
-        // Local Sidereal Time
-        const longitude = location.longitude || 0;
-        let lstHours = GMST_hours + longitude / 15;
-        if (lstHours < 0) lstHours += 24;
-        if (lstHours >= 24) lstHours -= 24;
-        
         const latitude = location.latitude || 0;
-        
+        const longitude = location.longitude || 0;
+        const observerCoords = { lat: latitude, lon: longitude };
+
+        // Calculate LST once for all stars. We can get it from the first star calculation.
+        let lstHours = 0;
+        if (stars.length > 0) {
+          const firstStarAltAz = calculateAltAz(
+            { ra: stars[0].RAJ2000, dec: stars[0].DEJ2000 },
+            observerCoords,
+            now
+          );
+          lstHours = firstStarAltAz.lst;
+        }
+
         console.log(`Observer Location: lat=${latitude.toFixed(4)}°, lon=${longitude.toFixed(4)}°`);
         console.log(`Current Time (UTC): ${now.toUTCString()}`);
-        console.log(`Julian Day: ${JD.toFixed(4)}`);
-        console.log(`GMST: ${GMST_hours.toFixed(4)}h, LST: ${lstHours.toFixed(4)}h`);
+        console.log(`LST: ${lstHours.toFixed(6)}h`);
         
         // Store observer location in ref for later use in handleSearchStar
         observerRef.current = { latitude, longitude, lstHours };
 
+        // Find min and max magnitude from the loaded stars for brightness normalization
+        let minMag = Infinity;
+        let maxMag = -Infinity;
+        stars.forEach(star => {
+          if (star.Vmag < minMag) minMag = star.Vmag;
+          if (star.Vmag > maxMag) maxMag = star.Vmag;
+        });
+        const magRange = maxMag - minMag;
+        console.log(`Magnitude range for brightness scaling: ${minMag.toFixed(2)} to ${maxMag.toFixed(2)}`);
+
         stars.forEach((star, index) => {
-          const [x, y, z] = celestialToCartesian(
-            star.RAJ2000,
-            star.DEJ2000,
-            100,
-            latitude,
-            longitude,
-            lstHours
+          // Calculate Alt/Az using the new high-precision function
+          const altAz = calculateAltAz(
+            { ra: star.RAJ2000, dec: star.DEJ2000 },
+            observerCoords,
+            now
           );
+
+          // Convert Alt/Az to Cartesian coordinates for rendering
+          const { x, y, z } = altAzToCartesian(altAz.altitude, altAz.azimuth, 100);
+
           starPositions.push(x, y, z);
           starsRef.current.set(index, star);
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
           
+          starAltAzRef.current.set(index, altAz);
+          
           // Debug: log first 5 stars with their positions and calculated angles
           if (index < 5) {
-            // Recalculate to get intermediate values for debugging
-            const raRad = (star.RAJ2000 * Math.PI) / 180;
-            const decRad = (star.DEJ2000 * Math.PI) / 180;
-            const latRad = (latitude * Math.PI) / 180;
-            const lstRad = (lstHours * 15 * Math.PI) / 180;
-            const hourAngle = lstRad - raRad;
-            
-            const sinAlt = Math.sin(decRad) * Math.sin(latRad) + 
-                           Math.cos(decRad) * Math.cos(latRad) * Math.cos(hourAngle);
-            const altitude = Math.asin(sinAlt);
-            const altDeg = (altitude * 180) / Math.PI;
-            
-            const y_az = -Math.sin(hourAngle);
-            const x_az = Math.tan(decRad) * Math.cos(latRad) - Math.sin(latRad) * Math.cos(hourAngle);
-            let azimuth = Math.atan2(y_az, x_az);
-            if (azimuth < 0) azimuth += 2 * Math.PI;
-            const azDeg = (azimuth * 180) / Math.PI;
-            
-            console.log(`${star.display_name}: RA=${star.RAJ2000.toFixed(1)}°, Dec=${star.DEJ2000.toFixed(1)}°, HA=${(hourAngle*180/Math.PI).toFixed(1)}°, Alt=${altDeg.toFixed(1)}°, Az=${azDeg.toFixed(1)}° → Cartesian=(${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`);
+            console.log(`${star.display_name}: RA=${star.RAJ2000.toFixed(1)}°, Dec=${star.DEJ2000.toFixed(1)}°, Alt=${altAz.altitude.toFixed(1)}°, Az=${altAz.azimuth.toFixed(1)}° → Cartesian=(${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`);
           }
           
           // Calculate brightness based on magnitude (brighter = lower magnitude)
           // Extreme exponential curve for maximum contrast
-          const brightness = Math.max(0.000001, Math.pow(1 - (star.Vmag / 8), 6)) * 400;
-          // Size has moderate contrast
-          const size = 0.5 + Math.sqrt(brightness) * 0.5;
+          // Normalize magnitude and use a power curve for better control over brightness range.
+          const normalizedMag = (star.Vmag - minMag) / magRange; // 0 for brightest, 1 for dimmest
+          const brightness = 0.4 + Math.pow(1 - normalizedMag, 2.0) * 0.6; // Ensure min brightness is 0.4
+          const size = magnitudeToSize(star.Vmag); // Use utility for consistent sizing
           starSizes.push(size);
           starColors.push(Math.min(1, brightness), Math.min(1, brightness), Math.min(1, brightness));
         });
@@ -215,7 +267,7 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
             void main() {
               vColor = color;
               vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-              gl_PointSize = size * (300.0 / -mvPosition.z);
+              gl_PointSize = size * (1000.0 / -mvPosition.z);
               gl_Position = projectionMatrix * mvPosition;
             }
           `,
@@ -376,11 +428,14 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
               console.log('Found intersection at index:', pointIndex);
               if (pointIndex !== null && pointIndex !== undefined && starsRef.current.has(pointIndex)) {
                 const star = starsRef.current.get(pointIndex);
+                const altAz = starAltAzRef.current.get(pointIndex);
                 console.log('Setting hovered star:', star?.display_name);
                 setHoveredStar(star || null);
+                setHoveredStarAltAz(altAz || null);
               }
             } else {
               setHoveredStar(null);
+              setHoveredStarAltAz(null);
             }
           } else {
             console.log('Hover detection skipped - starMesh:', !!starMeshRef.current, 'camera:', !!cameraRef.current);
@@ -418,20 +473,18 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
           requestAnimationFrame(animate);
 
           // Update camera position based on spherical coordinates
+          // In ENU system: x=East, y=Up, z=-North
+          // We want theta=0 to look North (negative z), theta=π/2 to look East (positive x)
           const phi = cameraControlRef.current.phi;
           const theta = cameraControlRef.current.theta;
 
           // Calculate the direction vector to look at
-          // The star sphere is at distance 100, with:
-          // X-axis = North, Y-axis = Up, Z-axis = East
-          // theta = 0 should look North (positive X)
-          // theta = π/2 should look East (positive Z)
-          // phi = π/2 should look horizontal
-          // phi = 0 should look straight up (zenith)
+          // phi: 0 = zenith, π/2 = horizon, π = nadir
+          // theta: 0 = North, π/2 = East, π = South, 3π/2 = West
           const lookAtPoint = new THREE.Vector3(
-            100 * Math.sin(phi) * Math.cos(theta),  // North component (theta=0)
-            100 * Math.cos(phi),                      // Up component (phi=π/2 means horizontal)
-            100 * Math.sin(phi) * Math.sin(theta)    // East component (theta=π/2)
+            100 * Math.sin(phi) * Math.sin(theta),     // East component (theta=π/2)
+            100 * Math.cos(phi),                         // Up component (phi=0)
+            -100 * Math.sin(phi) * Math.cos(theta)      // Negative North (theta=0)
           );
 
           if (cameraRef.current) {
@@ -467,59 +520,54 @@ export function SkyViewer({ onSearchStar }: SkyViewerProps) {
     initScene();
   }, []);
 
-  const handleSearchStar = (searchName: string) => {
-    const star = starsByNameRef.current.get(searchName.toLowerCase());
-    if (star && cameraControlRef.current && cameraRef.current) {
-      // Calculate the camera angles needed to look at this star
-      const observer = observerRef.current;
-      const [x, y, z] = celestialToCartesian(
-        star.RAJ2000,
-        star.DEJ2000,
-        100,
-        observer.latitude,
-        observer.longitude,
-        observer.lstHours
-      );
-      
-      // Calculate spherical coordinates from the star position
-      // theta: horizontal angle (azimuth)
-      // phi: vertical angle from top
-      const theta = Math.atan2(z, x);
-      const phi = Math.acos(y / 100); // y is already the height component at distance 100
-      
-      cameraControlRef.current.theta = theta;
-      cameraControlRef.current.phi = phi;
-      
-      // Zoom in on the star (set FOV to 30)
-      cameraControlRef.current.fov = 30;
-      cameraRef.current.fov = 30;
-      cameraRef.current.updateProjectionMatrix();
-      
-      // Store searched star in ref instead of state so hover can still work
-      searchedStarRef.current = star;
-      // DON'T set hovered star here - let hover detection handle it naturally
-      // setHoveredStar(star);
-      onSearchStar?.(star);
-      console.log(`Found and navigating to ${star.display_name}`);
-    } else {
-      console.log(`Star "${searchName}" not found`);
-      // Don't clear hoveredStar if search fails - let current hover state remain
-      onSearchStar?.(null);
+  // Effect to handle searching for a star when the prop changes
+  useEffect(() => {
+    if (searchedStarName) {
+      const star = starsByNameRef.current.get(searchedStarName.toLowerCase());
+      if (star && cameraControlRef.current && cameraRef.current) {
+        // Calculate the camera angles needed to look at this star
+        const observer = observerRef.current;
+        const altAz = calculateAltAz(
+          { ra: star.RAJ2000, dec: star.DEJ2000 },
+          { lat: observer.latitude, lon: observer.longitude },
+          new Date()
+        );
+        
+        // Calculate spherical coordinates from the star's Alt/Az
+        const altRad = (altAz.altitude * Math.PI) / 180;
+        const azRad = (altAz.azimuth * Math.PI) / 180;
+
+        // phi is the vertical angle from zenith (Up), theta is horizontal from North
+        cameraControlRef.current.phi = Math.PI / 2 - altRad; // 90 degrees - altitude
+        cameraControlRef.current.theta = azRad;
+        
+        // Zoom in on the star
+        cameraControlRef.current.fov = 30;
+        cameraRef.current.fov = 30;
+        cameraRef.current.updateProjectionMatrix();
+        
+        console.log(`Navigating to ${star.display_name}`);
+      }
     }
-  };
+  }, [searchedStarName]);
 
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden">
-      <div ref={containerRef} className="flex-1" style={{ overflow: 'hidden' }} />
-      <StarSearch onSearch={handleSearchStar} availableStars={availableStarNames} />
+      <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
       {hoveredStar && (
         <div className="absolute bottom-4 left-4 bg-black bg-opacity-75 text-white p-3 rounded border border-blue-500">
           <p className="text-lg font-semibold">{hoveredStar.display_name}</p>
           <p className="text-sm text-gray-300">Magnitude: {hoveredStar.Vmag.toFixed(2)}</p>
           <p className="text-sm text-gray-300">RA: {hoveredStar.RAJ2000.toFixed(2)}°</p>
           <p className="text-sm text-gray-300">Dec: {hoveredStar.DEJ2000.toFixed(2)}°</p>
+          {hoveredStarAltAz && (
+            <>
+              <p className="text-sm text-gray-300">Alt: {hoveredStarAltAz.altitude.toFixed(2)}°</p>
+              <p className="text-sm text-gray-300">Az: {hoveredStarAltAz.azimuth.toFixed(2)}°</p>
+            </>
+          )}
         </div>
       )}
     </div>
   );
-}
+});

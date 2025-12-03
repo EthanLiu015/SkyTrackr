@@ -1,11 +1,14 @@
 import { Menu } from "lucide-react";
 import { Button } from "./ui/button";
+import { StarSearch } from "./StarSearch";
 
 interface MenuBarProps {
   onMenuClick: () => void;
+  onSearch: (starName: string) => void;
+  availableStars: string[];
 }
 
-export function MenuBar({ onMenuClick }: MenuBarProps) {
+export function MenuBar({ onMenuClick, onSearch, availableStars }: MenuBarProps) {
   return (
     <header className="w-full bg-[#2a2a2a] border-b border-gray-700 px-4 py-3 flex items-center justify-between">
       <Button
@@ -22,6 +25,10 @@ export function MenuBar({ onMenuClick }: MenuBarProps) {
           <span className="text-white">★</span>
         </div>
         <span className="text-white text-xl tracking-wide">SkyTrackr</span>
+      </div>
+      
+      <div className="flex-1 mx-8">
+        <StarSearch onSearch={onSearch} availableStars={availableStars} />
       </div>
     </header>
   );
