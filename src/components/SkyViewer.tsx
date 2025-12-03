@@ -286,6 +286,42 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         });
 
         const starMesh = new THREE.Points(starGeometry, starMaterial2);
+        // Create a material for the star glow
+        const starGlowMaterial = new THREE.ShaderMaterial({
+          uniforms: {
+            map: { value: starTexture }, // Use the same circular texture
+          },
+          vertexShader: `
+            attribute float size;
+            attribute vec3 color;
+            varying vec3 vColor;
+            void main() {
+              vColor = color;
+              vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+              // Make glow larger than the core star, e.g., 5x its size
+              gl_PointSize = size * 5.0 * (1000.0 / -mvPosition.z);
+              gl_Position = projectionMatrix * mvPosition;
+            }
+          `,
+          fragmentShader: `
+            uniform sampler2D map;
+            varying vec3 vColor;
+            void main() {
+              float dist = distance(gl_PointCoord, vec2(0.5, 0.5));
+              // Create a soft, fading glow effect
+              // smoothstep(edge0, edge1, x) returns 0.0 if x <= edge0, 1.0 if x >= edge1, and smoothly interpolates otherwise.
+              // Here, it fades from 1.0 at center (dist=0) to 0.0 at edge (dist=0.5)
+              float alpha = smoothstep(0.5, 0.0, dist);
+              gl_FragColor = vec4(vColor, alpha * 0.2); // Adjust 0.2 for desired glow intensity
+            }
+          `,
+          blending: THREE.AdditiveBlending, // Crucial for glow effect
+          depthTest: false, // Don't test against depth buffer for glow
+          depthWrite: false, // Don't write to depth buffer for glow
+          transparent: true,
+        });
+        const starGlowMesh = new THREE.Points(starGeometry, starGlowMaterial);
+        scene.add(starGlowMesh); // Add glow mesh first
         starMeshRef.current = starMesh;
         scene.add(starMesh);
         console.log('Stars added to scene');
@@ -508,6 +544,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           containerRef.current?.removeEventListener('wheel', handleWheel);
           renderer.dispose();
           starGeometry.dispose();
+          starGlowMaterial.dispose(); // Dispose the new material
           starMaterial2.dispose();
           groundGeometry.dispose();
           groundMaterial.dispose();
