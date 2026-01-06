@@ -21,7 +21,7 @@ export async function loadStarData(): Promise<Star[]> {
     
     console.log('CSV Headers:', headers);
     
-    // Find column indices
+    // find column indices
     const hrIndex = headers.indexOf('HR');
     const nameIndex = headers.indexOf('Name');
     const hdIndex = headers.indexOf('HD');
@@ -64,7 +64,7 @@ export async function loadStarData(): Promise<Star[]> {
     
     // Sort by magnitude (brightness) and take the 100 brightest
     stars.sort((a, b) => a.Vmag - b.Vmag);
-    const brightestStars = stars.slice(0, 300);
+    const brightestStars = stars.slice(0, 400);
     console.log(`Using ${brightestStars.length} brightest stars`);
     
     return brightestStars;
@@ -89,5 +89,5 @@ export function magnitudeToSize(magnitude: number): number {
   // Brighter stars (lower magnitude) = larger size
   // A non-linear scale that gives more prominence to brighter stars
   const size = Math.pow(2.0, -magnitude / 2.5);
-  return Math.max(0.8, Math.min(size * 2.0, 25.0)); // Clamp between 1.5 and 25.0
+  return Math.max(0.3, Math.min(size * 1.5, 5.0)); // Clamp between 1.5 and 25.0
 }

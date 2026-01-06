@@ -15,12 +15,9 @@ interface SideNavProps {
 export function SideNav({ open, onOpenChange, onNavigate }: SideNavProps) {
   const navItems = [
     { icon: Home, label: "Home", view: "sky" as const },
-    { icon: Search, label: "Search Sky", view: "sky" as const },
-    { icon: Compass, label: "Navigate", view: "sky" as const },
     { icon: Star, label: "Favorites", view: "sky" as const },
     { icon: Cloud, label: "Conditions", view: "conditions" as const },
     { icon: Settings, label: "Settings", view: "sky" as const },
-    { icon: Info, label: "About", view: "sky" as const },
   ];
 
   const handleNavClick = (view: "sky" | "conditions") => {

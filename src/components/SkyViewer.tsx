@@ -253,6 +253,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const magRange = maxMag - minMag;
         console.log(`Magnitude range for brightness scaling: ${minMag.toFixed(2)} to ${maxMag.toFixed(2)}`);
 
+        let visibleStarIndex = 0;
         stars.forEach((star, index) => {
           // Calculate Alt/Az using the new high-precision function
           const altAz = calculateAltAz(
@@ -261,17 +262,22 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             now
           );
 
+          // Only display stars that are completely above the horizon (altitude > 0)
+          if (altAz.altitude <= 0) {
+            return; // Skip stars below or on the horizon
+          }
+
           // Convert Alt/Az to Cartesian coordinates for rendering
           const { x, y, z } = altAzToCartesian(altAz.altitude, altAz.azimuth, 100);
 
           starPositions.push(x, y, z);
-          starsRef.current.set(index, star);
+          starsRef.current.set(visibleStarIndex, star);
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
           
-          starAltAzRef.current.set(index, altAz);
+          starAltAzRef.current.set(visibleStarIndex, altAz);
           
-          // Debug: log first 5 stars with their positions and calculated angles
-          if (index < 5) {
+          // Debug: log first 5 visible stars with their positions and calculated angles
+          if (visibleStarIndex < 5) {
             console.log(`${star.display_name}: RA=${star.RAJ2000.toFixed(1)}°, Dec=${star.DEJ2000.toFixed(1)}°, Alt=${altAz.altitude.toFixed(1)}°, Az=${altAz.azimuth.toFixed(1)}° → Cartesian=(${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`);
           }
           
@@ -283,6 +289,8 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           const size = magnitudeToSize(star.Vmag); // Use utility for consistent sizing
           starSizes.push(size);
           starColors.push(Math.min(1, brightness), Math.min(1, brightness), Math.min(1, brightness));
+          
+          visibleStarIndex++;
         });
 
         console.log(`Created ${starPositions.length / 3} star positions`);
