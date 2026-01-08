@@ -58,7 +58,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
   const [hoveredStarAltAz, setHoveredStarAltAz] = useState<StarAltAz | null>(null);
-  const searchedStarRef = useRef<Star | null>(null);
+  const [belowHorizonWarning, setBelowHorizonWarning] = useState<string | null>(null);
   // Store observer location for coordinate transformations
   const observerRef = useRef({
     latitude: 0,
@@ -85,6 +85,16 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
           new Date()
         );
+
+        if (altAz.altitude <= 0) {
+          setBelowHorizonWarning(`${star.display_name} is below the horizon right now.`);
+          // Auto-dismiss after 5 seconds
+          setTimeout(() => setBelowHorizonWarning(null), 5000);
+          return;
+        }
+        
+        // Clear warning if star is above horizon
+        setBelowHorizonWarning(null);
         
         // Calculate spherical coordinates from the star's Alt/Az
         const altRad = (altAz.altitude * Math.PI) / 180;
@@ -254,7 +264,10 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         console.log(`Magnitude range for brightness scaling: ${minMag.toFixed(2)} to ${maxMag.toFixed(2)}`);
 
         let visibleStarIndex = 0;
-        stars.forEach((star, index) => {
+        stars.forEach((star) => {
+          // Always keep lookup by name for search, even if the star is below the horizon
+          starsByNameRef.current.set(star.display_name.toLowerCase(), star);
+
           // Calculate Alt/Az using the new high-precision function
           const altAz = calculateAltAz(
             { ra: star.RAJ2000, dec: star.DEJ2000 },
@@ -272,7 +285,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
           starPositions.push(x, y, z);
           starsRef.current.set(visibleStarIndex, star);
-          starsByNameRef.current.set(star.display_name.toLowerCase(), star);
           
           starAltAzRef.current.set(visibleStarIndex, altAz);
           
@@ -314,16 +326,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         }
         const starTexture = new THREE.CanvasTexture(starCanvas);
 
-        const starMaterial = new THREE.PointsMaterial({
-          map: starTexture,
-          size: 0.1,
-          sizeAttenuation: true,
-          transparent: true,
-          opacity: 0.9,
-          vertexColors: true,
-        });
-
-        // Use custom shader to respect per-vertex sizes
         const starMaterial2 = new THREE.ShaderMaterial({
           uniforms: {
             map: { value: starTexture },
@@ -336,7 +338,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
               vColor = color;
               vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
               // Using (size * size) increases the contrast, making bright stars much larger than dim ones.
-              gl_PointSize = size * (1500.0 / -mvPosition.z);
+              gl_PointSize = size * (1000.0 / -mvPosition.z);
               gl_Position = projectionMatrix * mvPosition;
             }
           `,
@@ -368,7 +370,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
               vColor = color;
               vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
               // Increased multipliers to make the glow larger and more prominent.
-              gl_PointSize = size * sqrt(size) * 3.5 * (1500.0 / -mvPosition.z);
+              gl_PointSize = size * sqrt(size) * 3.5 * (1000.0 / -mvPosition.z);
               gl_Position = projectionMatrix * mvPosition;
             }
           `,
@@ -623,6 +625,16 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           { lat: observer.latitude, lon: observer.longitude },
           new Date()
         );
+
+        if (altAz.altitude <= 0) {
+          setBelowHorizonWarning(`${star.display_name} is below the horizon right now.`);
+          // Auto-dismiss after 5 seconds
+          setTimeout(() => setBelowHorizonWarning(null), 5000);
+          return;
+        }
+        
+        // Clear warning if star is above horizon
+        setBelowHorizonWarning(null);
         
         // Calculate spherical coordinates from the star's Alt/Az
         const altRad = (altAz.altitude * Math.PI) / 180;
@@ -657,6 +669,11 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
               <p className="text-sm text-gray-300">Az: {hoveredStarAltAz.azimuth.toFixed(2)}°</p>
             </>
           )}
+        </div>
+      )}
+      {belowHorizonWarning && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-yellow-600 bg-opacity-90 text-white px-6 py-3 rounded-lg border border-yellow-400 shadow-lg z-50">
+          <p className="text-base font-semibold">{belowHorizonWarning}</p>
         </div>
       )}
     </div>
