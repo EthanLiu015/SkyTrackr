@@ -23,6 +23,10 @@ interface StarAltAz {
   azimuth: number;
 }
 
+/**
+ * Main SkyViewer component that renders the 3D sky scene.
+ * It handles star visualization, camera controls, and user interaction.
+ */
 export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function SkyViewerComponent({ searchedStarName, onStarDataLoaded }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -40,11 +44,14 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   const [observer, setObserver] = useState({
     latitude: 0,
     longitude: 0,
-    lstHours: 0,
   });
 
   const cameraControlRef = useCameraControls(containerRef, cameraRef);
 
+  /**
+   * Moves the camera to look at a specific star.
+   * Checks if the star is below the horizon and sets a warning if so.
+   */
   const navigateToStar = useCallback((star: Star) => {
     if (!cameraRef.current) return;
     const altAz = calculateAltAz(
@@ -75,6 +82,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   }, [cameraControlRef, observer]);
 
   useImperativeHandle(ref, () => ({
+    /**
+     * Exposed method to search for a star by name and navigate to it.
+     */
     searchForStar: (starName: string) => {
       const star = starsByNameRef.current.get(starName.toLowerCase());
       if (star) {
@@ -84,6 +94,10 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   }), [navigateToStar]);
 
   useEffect(() => {
+    /**
+     * Initializes the THREE.js scene, camera, renderer, and objects.
+     * Loads star data and sets up event listeners.
+     */
     const initScene = async () => {
       if (!containerRef.current) return;
 
@@ -129,12 +143,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const longitude = location.longitude || 0;
         const observerCoords = { lat: latitude, lon: longitude };
 
-        let lstHours = 0;
-        if (stars.length > 0) {
-          const firstStarAltAz = calculateAltAz({ ra: stars[0].RAJ2000, dec: stars[0].DEJ2000 }, observerCoords, now);
-          lstHours = firstStarAltAz.lst;
-        }
-        setObserver({ latitude, longitude, lstHours });
+        setObserver({ latitude, longitude });
 
         stars.forEach((star) => {
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
@@ -146,6 +155,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         scene.add(starMesh);
         starMeshRef.current = starMesh;
 
+        /**
+         * Handles window resize events to update camera aspect ratio and renderer size.
+         */
         const handleResize = () => {
           const newWidth = containerRef.current?.clientWidth || width;
           const newHeight = containerRef.current?.clientHeight || height;
@@ -156,6 +168,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
         window.addEventListener('resize', handleResize);
 
+        /**
+         * Handles mouse move events for raycasting (hovering over stars).
+         */
         const handleMouseMove = (event: MouseEvent) => {
           if (!containerRef.current) return;
 
@@ -184,6 +199,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
         containerRef.current.addEventListener('mousemove', handleMouseMove);
 
+        /**
+         * Animation loop for rendering the scene.
+         */
         const animate = () => {
           requestAnimationFrame(animate);
 

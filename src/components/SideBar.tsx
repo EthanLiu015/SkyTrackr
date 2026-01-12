@@ -1,4 +1,4 @@
-import { Home, Compass, Star, Settings, Info, Search, Cloud } from "lucide-react";
+import { Home, Star, Settings, Cloud } from "lucide-react";
 import {
   Sheet,
   SheetContent,

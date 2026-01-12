@@ -1,4 +1,4 @@
-import { Cloud, CloudRain, Sun, CloudSnow, CloudDrizzle, Wind, Eye } from "lucide-react";
+import { Cloud, CloudRain, Sun, CloudSnow, CloudDrizzle, Eye } from "lucide-react";
 import { ScrollArea, ScrollBar } from "./ui/scroll-area";
 
 const weatherIcons = {
