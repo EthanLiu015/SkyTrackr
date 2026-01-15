@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback, Component, type ErrorInfo } from 'react';
 import * as THREE from 'three';
 import { loadStarData, type Star } from '../utils/starDataLoader';
 import { getUserLocation, type UserLocation } from '../utils/geolocation';
 import { calculateAltAz } from '../utils/astroUtils';
+import { fetchPlanets, type Planet } from './planetData';
 import { StarInfoBox } from './ui/StarInfoBox';
 import { HorizonWarning } from './ui/HorizonWarning';
 import { createSkySphere, createGround, createDirectionalMarkers } from './three/SceneSetup';
@@ -23,6 +24,34 @@ interface StarAltAz {
   azimuth: number;
 }
 
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("StarInfoBox crashed:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="absolute bottom-20 left-4 bg-red-900/90 text-white p-4 rounded border border-red-500 z-50 max-w-md">
+          <h4 className="font-bold mb-1">Debug: Component Error</h4>
+          <p className="text-sm font-mono">{this.state.error?.message}</p>
+          <p className="text-xs mt-2 text-gray-300">Check console for object details</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 /**
  * Main SkyViewer component that renders the 3D sky scene.
  * Handles star visualization, camera controls, and user interaction.
@@ -36,6 +65,8 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   const starsByNameRef = useRef<Map<string, Star>>(new Map());
   const starAltAzRef = useRef<Map<number, StarAltAz>>(new Map());
   const starMeshRef = useRef<THREE.Points | null>(null);
+  const planetsRef = useRef<Planet[]>([]);
+  const planetGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
@@ -45,23 +76,24 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
     latitude: 0,
     longitude: 0,
   });
+  const observerRef = useRef({ latitude: 0, longitude: 0 });
 
   const cameraControlRef = useCameraControls(containerRef, cameraRef);
 
   /**
-   * Moves the camera to look at a specific star.
-   * Checks if the star is below the horizon and sets a warning if so.
+   * Moves the camera to look at a specific target (star or planet).
+   * Checks if the target is below the horizon and sets a warning if so.
    */
-  const navigateToStar = useCallback((star: Star) => {
+  const navigateToTarget = useCallback((target: { ra: number, dec: number, name: string }) => {
     if (!cameraRef.current) return;
     const altAz = calculateAltAz(
-      { ra: star.RAJ2000, dec: star.DEJ2000 },
+      { ra: target.ra, dec: target.dec },
       { lat: observer.latitude, lon: observer.longitude },
       new Date()
     );
 
     if (altAz.altitude <= 0) {
-      setBelowHorizonWarning(`${star.display_name} is below the horizon right now.`);
+      setBelowHorizonWarning(`${target.name} is below the horizon right now.`);
       setTimeout(() => setBelowHorizonWarning(null), 5000);
       return;
     }
@@ -78,7 +110,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
     cameraRef.current.fov = 30;
     cameraRef.current.updateProjectionMatrix();
     
-    console.log(`Navigating to ${star.display_name}`);
+    console.log(`Navigating to ${target.name}`);
   }, [cameraControlRef, observer]);
 
   useImperativeHandle(ref, () => ({
@@ -86,12 +118,19 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
      * Exposed method to search for a star by name and navigate to it.
      */
     searchForStar: (starName: string) => {
-      const star = starsByNameRef.current.get(starName.toLowerCase());
+      const lowerName = starName.toLowerCase();
+      const star = starsByNameRef.current.get(lowerName);
       if (star) {
-        navigateToStar(star);
+        navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
+        return;
+      }
+      
+      const planet = planetsRef.current.find(p => p.name.toLowerCase() === lowerName);
+      if (planet) {
+        navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
       }
     }
-  }), [navigateToStar]);
+  }), [navigateToTarget]);
 
   useEffect(() => {
     /**
@@ -104,7 +143,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
       try {
         const location: UserLocation = await getUserLocation();
         const stars = await loadStarData();
-        onStarDataLoaded?.(stars.map(star => star.display_name));
+        const planets = await fetchPlanets(location.latitude || 0, location.longitude || 0);
+        planetsRef.current = planets;
+        onStarDataLoaded?.([...stars.map(star => star.display_name), ...planets.map(p => p.name)]);
         
         if (stars.length === 0) {
           console.error('No stars loaded!');
@@ -144,6 +185,21 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const observerCoords = { lat: latitude, lon: longitude };
 
         setObserver({ latitude, longitude });
+        observerRef.current = { latitude, longitude };
+
+        // Create Planets as Spheres
+        const planetGroup = new THREE.Group();
+        scene.add(planetGroup);
+        planetGroupRef.current = planetGroup;
+
+        planets.forEach((planet) => {
+          // Base size multiplier. Stars are small points. Let's make planets significantly larger.
+          // planet.size ranges from 0.8 to 2.0.
+          const geometry = new THREE.SphereGeometry(2.5 * planet.size, 16, 16);
+          const material = new THREE.MeshBasicMaterial({ color: planet.color });
+          const mesh = new THREE.Mesh(geometry, material);
+          planetGroup.add(mesh);
+        });
 
         stars.forEach((star) => {
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
@@ -196,20 +252,98 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
           if (starMeshRef.current && cameraRef.current) {
             raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-            const intersects = raycasterRef.current.intersectObject(starMeshRef.current);
+            
+            // Check planets first
+            let planetHovered = false;
+            if (planetGroupRef.current) {
+              const intersects = raycasterRef.current.intersectObjects(planetGroupRef.current.children);
+              if (intersects.length > 0) {
+                const object = intersects[0].object;
+                const index = planetGroupRef.current.children.indexOf(object);
+                if (index !== -1 && planetsRef.current[index]) {
+                  const planet = planetsRef.current[index];
+                  const planetStar = {
+                    id: -1,
+                    display_name: planet.name,
+                    constellation: 'Solar System',
+                    magnitude: -2.0, // Planets are generally bright
+                    mag: -2.0,
+                    vmag: -2.0,
+                    Vmag: -2.0,
+                    color: planet.color,
+                    RAJ2000: planet.ra,
+                    DEJ2000: planet.dec,
+                    ra: planet.ra,
+                    dec: planet.dec,
+                    dist_ly: 0,
+                    dist: 0,
+                    spectral_type: 'Planet',
+                    proper_name: planet.name,
+                    bf_designation: '',
+                    abs_mag: 0,
+                    ci: 0,
+                    vx: 0,
+                    vy: 0,
+                    vz: 0,
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    rv: 0,
+                    pmra: 0,
+                    pmdec: 0,
+                    lum: 0,
+                    parallax: 0,
+                    distance: 0,
+                    radial_velocity: 0,
+                    // Additional properties to prevent crashes
+                    temperature: 0,
+                    mass: 0,
+                    radius: 0,
+                    rarad: 0,
+                    decrad: 0,
+                    bayer: '',
+                    flamsteed: '',
+                    con: '',
+                    comp: 0,
+                    base: '',
+                    var: '',
+                    var_min: 0,
+                    var_max: 0,
+                    hip: 0,
+                    hd: 0,
+                    hr: 0,
+                    gl: '',
+                  } as unknown as Star;
 
-            if (intersects.length > 0) {
-              const pointIndex = intersects[0].index;
-              if (pointIndex !== null && pointIndex !== undefined && starsRef.current.has(pointIndex)) {
-                const star = starsRef.current.get(pointIndex);
-                const altAz = starAltAzRef.current.get(pointIndex);
-                setHoveredStar(star || null);
-                setHoveredStarAltAz(altAz || null);
+                  const altAz = calculateAltAz(
+                    { ra: planet.ra, dec: planet.dec },
+                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
+                    new Date()
+                  );
+
+                  setHoveredStar(planetStar);
+                  setHoveredStarAltAz(altAz);
+                  planetHovered = true;
+                }
               }
-            } else {
-              setHoveredStar(null);
-              setHoveredStarAltAz(null);
             }
+
+            if (!planetHovered && starMeshRef.current) {
+              const intersects = raycasterRef.current.intersectObject(starMeshRef.current);
+
+              if (intersects.length > 0) {
+                const pointIndex = intersects[0].index;
+                if (pointIndex !== null && pointIndex !== undefined && starsRef.current.has(pointIndex)) {
+                  const star = starsRef.current.get(pointIndex);
+                  const altAz = starAltAzRef.current.get(pointIndex);
+                  setHoveredStar(star || null);
+                  setHoveredStarAltAz(altAz || null);
+                }
+              } else {
+                setHoveredStar(null);
+                setHoveredStarAltAz(null);
+              }
+            } 
           }
         };
 
@@ -255,6 +389,35 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
               }
             }
           }
+          
+          // Update Planets
+          if (planetGroupRef.current && planetsRef.current.length > 0) {
+            const now = new Date();
+            const radius = 500; // Place planets inside the sky sphere
+
+            planetGroupRef.current.children.forEach((child, i) => {
+              if (i >= planetsRef.current.length) return;
+              const planet = planetsRef.current[i];
+              
+              // Use local latitude/longitude variables to ensure correct location in closure
+              const altAz = calculateAltAz(
+                { ra: planet.ra, dec: planet.dec },
+                { lat: latitude, lon: longitude },
+                now
+              );
+
+              const altRad = (altAz.altitude * Math.PI) / 180;
+              const azRad = (altAz.azimuth * Math.PI) / 180;
+              const phi = Math.PI / 2 - altRad;
+              const theta = azRad;
+
+              child.position.set(
+                radius * Math.sin(phi) * Math.sin(theta),
+                radius * Math.cos(phi),
+                -radius * Math.sin(phi) * Math.cos(theta)
+              );
+            });
+          }
 
           renderer.render(scene, cameraRef.current!);
         };
@@ -273,6 +436,13 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           (starMesh.material as THREE.Material).dispose();
           starGlowMesh.geometry.dispose();
           (starGlowMesh.material as THREE.Material).dispose();
+          
+          planetGroup.children.forEach((child) => {
+            if (child instanceof THREE.Mesh) {
+              child.geometry.dispose();
+              (child.material as THREE.Material).dispose();
+            }
+          });
         };
       } catch (error) {
         console.error('Error initializing scene:', error);
@@ -285,17 +455,26 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
   useEffect(() => {
     if (searchedStarName) {
-      const star = starsByNameRef.current.get(searchedStarName.toLowerCase());
+      const lowerName = searchedStarName.toLowerCase();
+      const star = starsByNameRef.current.get(lowerName);
       if (star) {
-        navigateToStar(star);
+        navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
+        return;
+      }
+      
+      const planet = planetsRef.current.find(p => p.name.toLowerCase() === lowerName);
+      if (planet) {
+        navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
       }
     }
-  }, [searchedStarName, navigateToStar]);
+  }, [searchedStarName, navigateToTarget]);
 
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden">
       <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
-      <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
+      <ErrorBoundary>
+        <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
+      </ErrorBoundary>
       <HorizonWarning message={belowHorizonWarning} />
     </div>
   );
