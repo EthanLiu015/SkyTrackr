@@ -1,6 +1,6 @@
 import { DayForecast } from "../components/DayForecast";
 import { HourlyForecast } from "../components/HourlyForecast";
-import { MapPin, Lightbulb, Eye } from "lucide-react";
+import { Lightbulb, Eye } from "lucide-react";
 
 export function ConditionsDisplay() {
   // Current visibility (using a sample value - in a real app this would come from API)
@@ -11,10 +11,6 @@ export function ConditionsDisplay() {
       <div className="max-w-7xl mx-auto p-6">
         {/* Header */}
         <div className="mb-8 text-white">
-          <div className="flex items-center gap-2 mb-2">
-            <MapPin className="w-5 h-5" />
-            <span className="text-lg">San Francisco, CA</span>
-          </div>
           <div className="flex items-center gap-3 mb-2">
             <Eye className="w-10 h-10 text-blue-300" />
             <h1 className="text-5xl">{currentVisibility}%</h1>

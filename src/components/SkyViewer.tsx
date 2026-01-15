@@ -25,7 +25,7 @@ interface StarAltAz {
 
 /**
  * Main SkyViewer component that renders the 3D sky scene.
- * It handles star visualization, camera controls, and user interaction.
+ * Handles star visualization, camera controls, and user interaction.
  */
 export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function SkyViewerComponent({ searchedStarName, onStarDataLoaded }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -151,6 +151,22 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
         const { starMesh, starGlowMesh } = createStarField(stars, observerCoords, now, starsRef, starAltAzRef);
         
+        let baseStarSize = 0.15;
+        if (starMesh.material instanceof THREE.PointsMaterial) {
+          baseStarSize = starMesh.material.size;
+        } else if (starMesh.material instanceof THREE.ShaderMaterial && starMesh.material.uniforms.size) {
+          baseStarSize = starMesh.material.uniforms.size.value;
+        }
+
+        let baseGlowSize = 0.3;
+        if (starGlowMesh instanceof THREE.Points) {
+          if (starGlowMesh.material instanceof THREE.PointsMaterial) {
+            baseGlowSize = starGlowMesh.material.size;
+          } else if (starGlowMesh.material instanceof THREE.ShaderMaterial && starGlowMesh.material.uniforms.size) {
+            baseGlowSize = starGlowMesh.material.uniforms.size.value;
+          }
+        }
+
         scene.add(starGlowMesh);
         scene.add(starMesh);
         starMeshRef.current = starMesh;
@@ -217,6 +233,27 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           if (cameraRef.current) {
             cameraRef.current.position.set(0, 1.6, 0);
             cameraRef.current.lookAt(lookAtPoint.add(cameraRef.current.position));
+
+            if (typeof cameraControlRef.current.fov === 'number' && Math.abs(cameraRef.current.fov - cameraControlRef.current.fov) > 0.01) {
+              cameraRef.current.fov = cameraControlRef.current.fov;
+              cameraRef.current.updateProjectionMatrix();
+            }
+
+            const initialFov = 75;
+            const scale = initialFov / cameraRef.current.fov;
+
+            if (starMesh.material instanceof THREE.PointsMaterial) {
+              starMesh.material.size = baseStarSize * scale;
+            } else if (starMesh.material instanceof THREE.ShaderMaterial && starMesh.material.uniforms.size) {
+              starMesh.material.uniforms.size.value = baseStarSize * scale;
+            }
+            if (starGlowMesh instanceof THREE.Points) {
+              if (starGlowMesh.material instanceof THREE.PointsMaterial) {
+                starGlowMesh.material.size = baseGlowSize * scale;
+              } else if (starGlowMesh.material instanceof THREE.ShaderMaterial && starGlowMesh.material.uniforms.size) {
+                starGlowMesh.material.uniforms.size.value = baseGlowSize * scale;
+              }
+            }
           }
 
           renderer.render(scene, cameraRef.current!);
