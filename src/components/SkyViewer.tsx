@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback, Component, type ErrorInfo } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import * as THREE from 'three';
 import { loadStarData, type Star } from '../utils/starDataLoader';
 import { getUserLocation, type UserLocation } from '../utils/geolocation';
@@ -22,34 +22,6 @@ interface SkyViewerProps {
 interface StarAltAz {
   altitude: number;
   azimuth: number;
-}
-
-class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("StarInfoBox crashed:", error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="absolute bottom-20 left-4 bg-red-900/90 text-white p-4 rounded border border-red-500 z-50 max-w-md">
-          <h4 className="font-bold mb-1">Debug: Component Error</h4>
-          <p className="text-sm font-mono">{this.state.error?.message}</p>
-          <p className="text-xs mt-2 text-gray-300">Check console for object details</p>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
 }
 
 /**
@@ -472,9 +444,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden">
       <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
-      <ErrorBoundary>
-        <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
-      </ErrorBoundary>
+      <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
       <HorizonWarning message={belowHorizonWarning} />
     </div>
   );
