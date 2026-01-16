@@ -183,6 +183,26 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         };
         const fallbackTexture = createCircleTexture();
 
+        const createGlowTexture = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 32;
+          canvas.height = 32;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.15, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.3)');
+            gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.1)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 32, 32);
+          }
+          return new THREE.CanvasTexture(canvas);
+        };
+        const glowTexture = createGlowTexture();
+
         planets.forEach((planet) => {
           // Use Sprite for 2D images to ensure they are visible and not distorted
           const material = new THREE.SpriteMaterial({ 
@@ -208,7 +228,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
         });
 
-        const { starMesh, starGlowMesh } = createStarField(stars, observerCoords, now, starsRef, starAltAzRef);
+        const { starMesh } = createStarField(stars, observerCoords, now, starsRef, starAltAzRef);
         
         // Dispose of the original starMesh as we are replacing it with sprites
         starMesh.geometry.dispose();
@@ -263,22 +283,27 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           const rawMag = (star as any).vmag ?? (star as any).mag ?? (star as any).magnitude ?? (star as any).Vmag ?? 4;
           const magnitude = typeof rawMag === 'string' ? parseFloat(rawMag) : rawMag;
           const scale = magnitudeToSize(magnitude) * 6.0;
+
+          const glowMaterial = new THREE.SpriteMaterial({
+            map: glowTexture,
+            color: color,
+            transparent: true,
+            opacity: 0.5,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          });
+          const glowSprite = new THREE.Sprite(glowMaterial);
+          glowSprite.position.set(x, y, z);
+          const glowScale = scale * 4.0;
+          glowSprite.scale.set(glowScale, glowScale, 1);
+          starSpriteGroup.add(glowSprite);
+
           sprite.scale.set(scale, scale, 1);
           
           sprite.userData = { star, index: i };
           starSpriteGroup.add(sprite);
         });
-
-        let baseGlowSize = 0.3;
-        if (starGlowMesh instanceof THREE.Points) {
-          if (starGlowMesh.material instanceof THREE.PointsMaterial) {
-            baseGlowSize = starGlowMesh.material.size;
-          } else if (starGlowMesh.material instanceof THREE.ShaderMaterial && starGlowMesh.material.uniforms.size) {
-            baseGlowSize = starGlowMesh.material.uniforms.size.value;
-          }
-        }
-
-        scene.add(starGlowMesh);
 
         /**
          * Handles window resize events to update camera aspect ratio and renderer size.
@@ -425,17 +450,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
               cameraRef.current.fov = cameraControlRef.current.fov;
               cameraRef.current.updateProjectionMatrix();
             }
-
-            const initialFov = 75;
-            const scale = initialFov / cameraRef.current.fov;
-
-            if (starGlowMesh instanceof THREE.Points) {
-              if (starGlowMesh.material instanceof THREE.PointsMaterial) {
-                starGlowMesh.material.size = baseGlowSize * scale;
-              } else if (starGlowMesh.material instanceof THREE.ShaderMaterial && starGlowMesh.material.uniforms.size) {
-                starGlowMesh.material.uniforms.size.value = baseGlowSize * scale;
-              }
-            }
           }
           
           // Update Planets
@@ -480,8 +494,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           (skySphere.material as THREE.Material).dispose();
           ground.geometry.dispose();
           (ground.material as THREE.Material).dispose();
-          starGlowMesh.geometry.dispose();
-          (starGlowMesh.material as THREE.Material).dispose();
           
           planetGroup.children.forEach((child) => {
             if (child instanceof THREE.Mesh) {
