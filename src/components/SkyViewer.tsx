@@ -204,10 +204,16 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         const glowTexture = createGlowTexture();
 
         planets.forEach((planet) => {
+          const planetContainer = new THREE.Group();
+
+          // Mix planet color with white to make it paler
+          const planetColor = new THREE.Color(planet.color);
+          planetColor.lerp(new THREE.Color(0xffffff), 0.6);
+
           // Use Sprite for 2D images to ensure they are visible and not distorted
           const material = new THREE.SpriteMaterial({ 
             map: fallbackTexture,
-            color: planet.color,
+            color: planetColor,
             transparent: true,
             depthTest: false,
             depthWrite: false,
@@ -215,13 +221,30 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
           const sprite = new THREE.Sprite(material);
           sprite.renderOrder = 999;
+          sprite.userData = { isPlanet: true };
           
           // Scale sprite based on planet size. 
           // Adjusted multiplier for visibility.
           const scale = 4.0 * planet.size; 
           sprite.scale.set(scale, scale, 1);
           
-          planetGroup.add(sprite);
+          planetContainer.add(sprite);
+
+          const glowMaterial = new THREE.SpriteMaterial({
+            map: glowTexture,
+            color: planetColor,
+            transparent: true,
+            opacity: 0.6,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          });
+          const glowSprite = new THREE.Sprite(glowMaterial);
+          const glowScale = scale * 4.0;
+          glowSprite.scale.set(glowScale, glowScale, 1);
+          planetContainer.add(glowSprite);
+
+          planetGroup.add(planetContainer);
         });
 
         stars.forEach((star) => {
@@ -328,16 +351,17 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
           mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-          if (starMeshRef.current && cameraRef.current) {
+          if (cameraRef.current) {
             raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
             
             // Check planets first
             let planetHovered = false;
             if (planetGroupRef.current) {
-              const intersects = raycasterRef.current.intersectObjects(planetGroupRef.current.children);
-              if (intersects.length > 0) {
-                const object = intersects[0].object;
-                const index = planetGroupRef.current.children.indexOf(object);
+              const intersects = raycasterRef.current.intersectObjects(planetGroupRef.current.children, true);
+              const hit = intersects.find(intersect => intersect.object.userData.isPlanet);
+              if (hit) {
+                const planetContainer = hit.object.parent;
+                const index = planetContainer ? planetGroupRef.current.children.indexOf(planetContainer) : -1;
                 if (index !== -1 && planetsRef.current[index]) {
                   const planet = planetsRef.current[index];
                   const planetStar = {
@@ -409,9 +433,10 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             if (!planetHovered && starSpriteGroupRef.current) {
               const intersects = raycasterRef.current.intersectObjects(starSpriteGroupRef.current.children);
 
-              if (intersects.length > 0) {
-                const sprite = intersects[0].object;
-                const { star, index } = sprite.userData;
+              const hit = intersects.find(intersect => intersect.object.userData && intersect.object.userData.star);
+
+              if (hit) {
+                const { star, index } = hit.object.userData;
                 if (star) {
                   const altAz = starAltAzRef.current.get(index);
                   setHoveredStar(star);
@@ -496,12 +521,11 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
           (ground.material as THREE.Material).dispose();
           
           planetGroup.children.forEach((child) => {
-            if (child instanceof THREE.Mesh) {
-              child.geometry.dispose();
-              (child.material as THREE.Material).dispose();
-            } else if (child instanceof THREE.Sprite) {
-              (child.material as THREE.Material).dispose();
-            }
+            child.children.forEach((grandChild) => {
+              if (grandChild instanceof THREE.Sprite) {
+                (grandChild.material as THREE.Material).dispose();
+              }
+            });
           });
 
           starSpriteGroup.children.forEach((child) => {
