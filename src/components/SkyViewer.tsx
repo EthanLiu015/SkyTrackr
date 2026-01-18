@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, us
 import * as THREE from 'three';
 import { loadStarData, type Star, magnitudeToSize } from '../utils/starDataLoader';
 import { getUserLocation, type UserLocation } from '../utils/geolocation';
-import { calculateAltAz } from '../utils/astroUtils';
+import { calculateAltAz, getLocalSiderealTime } from '../utils/astroUtils';
 import { fetchPlanets, type Planet } from './planetData';
+import { useSimulationTime, SimulationTimeProvider } from '../contexts/SimulationTimeContext';
 import { StarInfoBox } from './ui/StarInfoBox';
 import { HorizonWarning } from './ui/HorizonWarning';
 import { createSkySphere, createGround, createDirectionalMarkers } from './three/SceneSetup';
@@ -28,7 +29,7 @@ interface StarAltAz {
  * Main SkyViewer component that renders the 3D sky scene.
  * Handles star visualization, camera controls, and user interaction.
  */
-export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function SkyViewerComponent({ searchedStarName, onStarDataLoaded }, ref) {
+const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function SkyViewerComponent({ searchedStarName, onStarDataLoaded }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -38,6 +39,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   const starAltAzRef = useRef<Map<number, StarAltAz>>(new Map());
   const starMeshRef = useRef<THREE.Points | null>(null);
   const starSpriteGroupRef = useRef<THREE.Group | null>(null);
+  const celestialGroupRef = useRef<THREE.Group | null>(null);
   const planetsRef = useRef<Planet[]>([]);
   const planetGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
@@ -51,7 +53,12 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
   });
   const observerRef = useRef({ latitude: 0, longitude: 0 });
 
+  const { simulationTime } = useSimulationTime();
   const cameraControlRef = useCameraControls(containerRef, cameraRef);
+
+  // Ref to access current simulation time inside closures (like event listeners)
+  const simulationTimeRef = useRef(simulationTime);
+  useEffect(() => { simulationTimeRef.current = simulationTime; }, [simulationTime]);
 
   /**
    * Moves the camera to look at a specific target (star or planet).
@@ -62,7 +69,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
     const altAz = calculateAltAz(
       { ra: target.ra, dec: target.dec },
       { lat: observer.latitude, lon: observer.longitude },
-      new Date()
+      simulationTimeRef.current
     );
 
     if (altAz.altitude <= 0) {
@@ -162,9 +169,15 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
         setObserver({ latitude, longitude });
         observerRef.current = { latitude, longitude };
 
+        // Create a Celestial Group to hold stars and planets
+        // This group will be rotated to simulate sky rotation
+        const celestialGroup = new THREE.Group();
+        scene.add(celestialGroup);
+        celestialGroupRef.current = celestialGroup;
+
         // Create Planets as Sprites
         const planetGroup = new THREE.Group();
-        scene.add(planetGroup);
+        celestialGroup.add(planetGroup);
         planetGroupRef.current = planetGroup;
 
         // Helper to create a fallback circle texture
@@ -259,22 +272,22 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
 
         // Create Star Sprites
         const starSpriteGroup = new THREE.Group();
-        scene.add(starSpriteGroup);
+        celestialGroup.add(starSpriteGroup);
         starSpriteGroupRef.current = starSpriteGroup;
 
         stars.forEach((star, i) => {
-          const altAz = starAltAzRef.current.get(i);
-          if (!altAz) return;
-
+          // Position stars using Equatorial Coordinates (RA/Dec)
+          // We map these to a sphere where Y is the North Celestial Pole
           const radius = 500;
-          const altRad = THREE.MathUtils.degToRad(altAz.altitude);
-          const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
-          const phi = Math.PI / 2 - altRad;
-          const theta = azRad;
+          const raRad = THREE.MathUtils.degToRad(star.RAJ2000);
+          const decRad = THREE.MathUtils.degToRad(star.DEJ2000);
 
-          const x = radius * Math.sin(phi) * Math.sin(theta);
-          const y = radius * Math.cos(phi);
-          const z = -radius * Math.sin(phi) * Math.cos(theta);
+          // Convert Spherical (RA/Dec) to Cartesian (x, y, z)
+          // In this local space, Y is up (North Pole), X/Z is the Equatorial plane
+          const cosDec = Math.cos(decRad);
+          const x = radius * cosDec * Math.sin(raRad); // East-West component
+          const y = radius * Math.sin(decRad);         // North-South component (Axis)
+          const z = radius * cosDec * Math.cos(raRad); // Projection
 
           // Determine color
           let color = 0xffffff;
@@ -420,7 +433,7 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
                   const altAz = calculateAltAz(
                     { ra: planet.ra, dec: planet.dec },
                     { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
-                    new Date()
+                    simulationTimeRef.current
                   );
 
                   setHoveredStar(planetStar);
@@ -456,8 +469,6 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
          * Animation loop for rendering the scene.
          */
         const animate = () => {
-          requestAnimationFrame(animate);
-
           const phi = cameraControlRef.current.phi;
           const theta = cameraControlRef.current.theta;
 
@@ -477,36 +488,40 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
             }
           }
           
+          // Update Sky Rotation
+          if (celestialGroupRef.current) {
+            const lst = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
+            const rotationAngle = THREE.MathUtils.degToRad(-lst);
+            celestialGroupRef.current.rotation.y = rotationAngle;
+
+            // Apply Latitude Tilt
+            const latitudeTilt = THREE.MathUtils.degToRad(90 - observerRef.current.latitude);
+            celestialGroupRef.current.rotation.x = latitudeTilt;
+          }
+
           // Update Planets
           if (planetGroupRef.current && planetsRef.current.length > 0) {
-            const now = new Date();
             const radius = 500; // Place planets inside the sky sphere
 
             planetGroupRef.current.children.forEach((child, i) => {
               if (i >= planetsRef.current.length) return;
               const planet = planetsRef.current[i];
               
-              // Use local latitude/longitude variables to ensure correct location in closure
-              const altAz = calculateAltAz(
-                { ra: planet.ra, dec: planet.dec },
-                { lat: latitude, lon: longitude },
-                now
-              );
-
-              const altRad = (altAz.altitude * Math.PI) / 180;
-              const azRad = (altAz.azimuth * Math.PI) / 180;
-              const phi = Math.PI / 2 - altRad;
-              const theta = azRad;
+              // Position planet using RA/Dec in the celestial frame
+              const raRad = THREE.MathUtils.degToRad(planet.ra);
+              const decRad = THREE.MathUtils.degToRad(planet.dec);
+              const cosDec = Math.cos(decRad);
 
               child.position.set(
-                radius * Math.sin(phi) * Math.sin(theta),
-                radius * Math.cos(phi),
-                -radius * Math.sin(phi) * Math.cos(theta)
+                radius * cosDec * Math.sin(raRad),
+                radius * Math.sin(decRad),
+                radius * cosDec * Math.cos(raRad)
               );
             });
           }
 
           renderer.render(scene, cameraRef.current!);
+          requestAnimationFrame(animate);
         };
 
         animate();
@@ -567,3 +582,9 @@ export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>(function S
     </div>
   );
 });
+
+export const SkyViewer = forwardRef<SkyViewerHandles, SkyViewerProps>((props, ref) => (
+  <SimulationTimeProvider>
+    <SkyViewerInner {...props} ref={ref} />
+  </SimulationTimeProvider>
+));
