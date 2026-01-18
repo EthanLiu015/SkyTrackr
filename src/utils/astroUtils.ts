@@ -1,75 +1,76 @@
+export const J2000 = 2451545.0;
+
 /**
- * Computes the Altitude and Azimuth of a celestial object.
- * Follows the precise formulas requested for high accuracy.
+ * Calculates the Julian Date from a standard JavaScript Date object.
+ */
+export function getJulianDate(date: Date): number {
+  return date.getTime() / 86400000.0 + 2440587.5;
+}
+
+/**
+ * Calculates Greenwich Mean Sidereal Time (GMST) in degrees.
+ */
+export function getGreenwichSiderealTime(date: Date): number {
+  const jd = getJulianDate(date);
+  const d = jd - J2000;
+  
+  // GMST formula in degrees: 280.46061837 + 360.98564736629 * d
+  let gmst = 280.46061837 + 360.98564736629 * d;
+  
+  // Normalize to 0-360 range
+  gmst = gmst % 360;
+  if (gmst < 0) gmst += 360;
+  
+  return gmst;
+}
+
+/**
+ * Calculates Local Sidereal Time (LST) in degrees based on longitude.
+ */
+export function getLocalSiderealTime(date: Date, longitude: number): number {
+  const gmst = getGreenwichSiderealTime(date);
+  let lst = gmst + longitude;
+  
+  // Normalize to 0-360 range
+  lst = lst % 360;
+  if (lst < 0) lst += 360;
+  
+  return lst;
+}
+
+/**
+ * Calculates Altitude and Azimuth from RA/Dec, location, and time.
+ * @param coords Object containing ra and dec in degrees
+ * @param location Object containing lat and lon in degrees
+ * @param date The date/time for calculation
  */
 export function calculateAltAz(
-  { ra, dec }: { ra: number; dec: number }, // RA in degrees, Dec in degrees
-  { lat, lon }: { lat: number; lon: number }, // Latitude and Longitude in degrees
+  coords: { ra: number; dec: number },
+  location: { lat: number; lon: number },
   date: Date
-): { altitude: number; azimuth: number; lst: number } {
-  // 1. Convert RA and Dec
-  // The provided RA is already in degrees, so we convert to radians directly.
-  const raRad = (ra * Math.PI) / 180;
-  const decRad = (dec * Math.PI) / 180;
+): { altitude: number; azimuth: number } {
+  const { ra, dec } = coords;
+  const { lat, lon } = location;
 
-  // 2. Compute Julian Date (JD)
-  const unixMilliseconds = date.getTime();
-  const jd = unixMilliseconds / 86400000 + 2440587.5;
+  const lst = getLocalSiderealTime(date, lon);
+  const ha = lst - ra; // Hour Angle in degrees
 
-  // 3. Compute GMST (Greenwich Mean Sidereal Time) in degrees
-  const T = (jd - 2451545.0) / 36525.0;
-  let gmst =
-    280.46061837 +
-    360.98564736629 * (jd - 2451545.0) +
-    0.000387933 * T * T -
-    (T * T * T) / 38710000;
+  const rad = Math.PI / 180;
+  const decRad = dec * rad;
+  const latRad = lat * rad;
+  const haRad = ha * rad;
 
-  gmst = gmst % 360;
-  if (gmst < 0) {
-    gmst += 360;
-  }
+  const sinAlt = Math.sin(decRad) * Math.sin(latRad) + Math.cos(decRad) * Math.cos(latRad) * Math.cos(haRad);
+  const altRad = Math.asin(sinAlt);
 
-  // 4. Compute Local Sidereal Time (LST) in degrees
-  let lst = gmst + lon;
-  lst = lst % 360;
-  if (lst < 0) {
-    lst += 360;
-  }
+  const y = -Math.sin(haRad) * Math.cos(decRad);
+  const x = Math.cos(decRad) * Math.sin(latRad) * Math.cos(haRad) - Math.sin(decRad) * Math.cos(latRad);
 
-  // 5. Convert LST to radians and compute the Hour Angle (HA) in radians
-  const lstRad = (lst * Math.PI) / 180;
-  let hourAngle = lstRad - raRad;
+  let azRad = Math.atan2(y, x);
+  let azimuth = azRad / rad;
+  let altitude = altRad / rad;
 
-  // Normalize HA to [-π, +π]
-  while (hourAngle > Math.PI) hourAngle -= 2 * Math.PI;
-  while (hourAngle < -Math.PI) hourAngle += 2 * Math.PI;
+  if (azimuth < 0) azimuth += 360;
 
-  // 6. Convert latitude to radians
-  const latRad = (lat * Math.PI) / 180;
-
-  // 7. Compute Altitude
-  const sinAlt =
-    Math.sin(decRad) * Math.sin(latRad) +
-    Math.cos(decRad) * Math.cos(latRad) * Math.cos(hourAngle);
-  const altitude = Math.asin(sinAlt);
-
-  // 8. Compute Azimuth
-  const cosAlt = Math.cos(altitude);
-  const sinAz = -Math.cos(decRad) * Math.sin(hourAngle) / cosAlt;
-  const cosAz =
-    (Math.sin(decRad) - sinAlt * Math.sin(latRad)) /
-    (cosAlt * Math.cos(latRad));
-  let azimuth = Math.atan2(sinAz, cosAz);
-
-  // Normalize Az to [0, 2π)
-  if (azimuth < 0) {
-    azimuth += 2 * Math.PI;
-  }
-
-  // 9. Return Alt and Az in degrees
-  return {
-    altitude: altitude * (180 / Math.PI),
-    azimuth: azimuth * (180 / Math.PI),
-    lst: lst / 15, // Return LST in hours for other uses
-  };
+  return { altitude, azimuth };
 }
