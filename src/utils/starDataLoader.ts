@@ -10,57 +10,27 @@ export interface Star {
 
 export async function loadStarData(): Promise<Star[]> {
   try {
-    const response = await fetch('/star_data.csv');
+    // Fetch from the FastAPI backend
+    const response = await fetch('http://127.0.0.1:8000/stars');
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    const csv = await response.text();
-    const lines = csv.split('\n');
-    const headerLine = lines[0];
-    const headers = headerLine.split(',').map(h => h.trim());
     
-    console.log('CSV Headers:', headers);
+    // API returns full star objects
+    const data = await response.json();
     
-    // find column indices
-    const hrIndex = headers.indexOf('HR');
-    const nameIndex = headers.indexOf('Name');
-    const hdIndex = headers.indexOf('HD');
-    const raIndex = headers.indexOf('RAJ2000');
-    const decIndex = headers.indexOf('DEJ2000');
-    const vmIndex = headers.indexOf('Vmag');
-    const displayNameIndex = headers.indexOf('display_name');
+    // Map API data to the existing Star interface
+    const stars: Star[] = data.map((item: any) => ({
+      HR: item.HR,
+      Name: item.Name,
+      HD: item.HD,
+      RAJ2000: item.RAJ2000,
+      DEJ2000: item.DEJ2000,
+      Vmag: item.Vmag,
+      display_name: item.display_name || item.Name
+    }));
     
-    const stars: Star[] = [];
-    
-    for (let i = 1; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
-      
-      const values = lines[i].split(',').map(v => v.trim());
-      
-      const hr = parseInt(values[hrIndex] || '0') || 0;
-      const hd = parseInt(values[hdIndex] || '0') || 0;
-      const ra = parseFloat(values[raIndex] || '0') || 0;
-      const dec = parseFloat(values[decIndex] || '0') || 0;
-      const vmag = parseFloat(values[vmIndex] || '99') || 99;
-      const displayName = values[displayNameIndex] || `HD ${hd}` || `HR ${hr}` || 'Unknown Star';
-      
-      // Only include valid stars with valid coordinates
-      if (ra >= 0 && ra <= 360 && dec >= -90 && dec <= 90 && vmag < 99) {
-        const star: Star = {
-          HR: hr,
-          Name: values[nameIndex]?.trim() || '',
-          HD: hd,
-          RAJ2000: ra,
-          DEJ2000: dec,
-          Vmag: vmag,
-          display_name: displayName,
-        };
-        
-        stars.push(star);
-      }
-    }
-    
-    console.log(`Loaded ${stars.length} stars before filtering`);
+    console.log(`Loaded ${stars.length} stars from API`);
     
     // Sort by magnitude (brightness) and take the 600 brightest
     stars.sort((a, b) => a.Vmag - b.Vmag);
