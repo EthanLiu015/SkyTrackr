@@ -114,7 +114,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   });
   const observerRef = useRef({ latitude: 0, longitude: 0 });
   const [sceneReady, setSceneReady] = useState(false);
-  const lastPlanetFetchTimeRef = useRef<number>(0);
   
   const [planetTextures] = useState(() => ({
     map: createCircleTexture(),
@@ -198,11 +197,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         const stars = await loadStarData();
         if (!active) return;
 
-        const planets = await fetchPlanets(location.latitude || 0, location.longitude || 0);
-        if (!active) return;
-
-        planetsRef.current = planets;
-        onStarDataLoaded?.([...stars.map(star => star.display_name), ...planets.map(p => p.name)]);
+        onStarDataLoaded?.(stars.map(star => star.display_name));
         
         if (stars.length === 0) {
           console.error('No stars loaded!');
@@ -689,26 +684,30 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   useEffect(() => {
     if (!sceneReady) return;
 
-    const now = Date.now();
-    // Throttle API calls to prevent ERR_INSUFFICIENT_RESOURCES
-    if (now - lastPlanetFetchTimeRef.current < 2000) {
-      return;
-    }
-    lastPlanetFetchTimeRef.current = now;
-
     let active = true;
     const updatePlanets = async () => {
       if (!planetGroupRef.current) return;
 
       // Fetch planets for the new time
-      // We cast fetchPlanets to any because we assume it might accept a date, 
-      // or if not, we are just re-fetching. If it doesn't accept date, 
-      // orbital motion won't update correctly without modifying planetData.ts
-      const planets = await (fetchPlanets as any)(observer.latitude, observer.longitude, simulationTime);
+      let planets: Planet[] = [];
+      try {
+        // We cast fetchPlanets to any because we assume it might accept a date, 
+        // or if not, we are just re-fetching. If it doesn't accept date, 
+        // orbital motion won't update correctly without modifying planetData.ts
+        planets = await (fetchPlanets as any)(observer.latitude, observer.longitude, simulationTimeRef.current);
+      } catch (error) {
+        console.error("Failed to fetch planets:", error);
+        return;
+      }
       
       if (!active) return;
 
       planetsRef.current = planets;
+
+      if (onStarDataLoaded && starsByNameRef.current.size > 0) {
+        const starNames = Array.from(starsByNameRef.current.values()).map(s => s.display_name);
+        onStarDataLoaded([...starNames, ...planets.map(p => p.name)]);
+      }
 
       const planetGroup = planetGroupRef.current;
       const radius = 500;
@@ -728,7 +727,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         let planetContainer = existingPlanets.get(planet.name);
 
         // Position planet using Alt/Az
-        const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observer.latitude, lon: observer.longitude }, simulationTime);
+        const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observer.latitude, lon: observer.longitude }, simulationTimeRef.current);
         const altRad = THREE.MathUtils.degToRad(altAz.altitude);
         const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
 
@@ -753,7 +752,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           });
 
           const sprite = new THREE.Sprite(material);
-          sprite.renderOrder = 999;
           sprite.userData = { isPlanet: true };
           
           const scale = 4.0 * planet.size;
@@ -806,8 +804,13 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     };
 
     updatePlanets();
-    return () => { active = false; };
-  }, [simulationTime, observer, sceneReady, planetTextures]);
+    const interval = setInterval(updatePlanets, 2000);
+
+    return () => { 
+      active = false; 
+      clearInterval(interval);
+    };
+  }, [observer, sceneReady, planetTextures, onStarDataLoaded]);
 
   useEffect(() => {
     if (searchedStarName && sceneReady) {
