@@ -529,7 +529,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
             // Check stars if no planet hovered
             if (!planetHovered && starSpriteGroupRef.current) {
               const intersects = raycasterRef.current.intersectObjects(starSpriteGroupRef.current.children);
-              const hit = intersects.find(intersect => intersect.object.userData && intersect.object.userData.star);
+              const hit = intersects.find(intersect => intersect.object.userData && intersect.object.userData.star && !intersect.object.userData.isGlow);
 
               if (hit) {
                 const { star } = hit.object.userData;
