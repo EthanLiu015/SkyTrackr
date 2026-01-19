@@ -55,9 +55,17 @@ export function celestialToCartesian(
 ): { x: number; y: number; z: number } { return {x:0, y:0, z:0}; }
 
 export function magnitudeToSize(magnitude: number): number {
-  // Convert apparent magnitude to point size
-  // Brighter stars (lower magnitude) = larger size
-  // A non-linear scale that gives more prominence to brighter stars
-  const size = Math.pow(7.0, -magnitude / 3.5);
-  return Math.max(0.05, Math.min(size * 0.8, 5.0)); // Clamp between 0.05 and 5.0
+  if (magnitude >= 5) {
+    return 0.05;
+  }
+  // Stars with magnitude >= 4 (dimmer stars) get the minimum size
+  if (magnitude >= 4.0) {
+    return 0.1;
+  }
+
+  // For brighter stars (magnitude < 4), we scale up gently.
+  // We want the difference between magnitude 1 and -4 to be small (not exponential).
+  // Formula: MinSize + (Threshold - Magnitude) * ScaleFactor
+  // Example: Mag 1 -> ~0.85, Mag -4 -> ~2.1
+  return 0.1 + (4.0 - magnitude) * 0.25;
 }
