@@ -10,6 +10,7 @@ import { HorizonWarning } from './ui/HorizonWarning';
 import { createSkySphere, createGround, createDirectionalMarkers } from './three/SceneSetup';
 import { createStarField } from './three/StarrySky';
 import { useCameraControls } from './three/hooks/useCameraControls';
+import { TimeController } from './TimeController';
 
 export interface SkyViewerHandles {
   searchForStar: (starName: string) => void;
@@ -24,6 +25,40 @@ interface StarAltAz {
   altitude: number;
   azimuth: number;
 }
+
+// Helper to create a fallback circle texture
+const createCircleTexture = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.beginPath();
+    ctx.arc(32, 32, 28, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  }
+  return new THREE.CanvasTexture(canvas);
+};
+
+const createGlowTexture = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.15, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.3)');
+    gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.1)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 32, 32);
+  }
+  return new THREE.CanvasTexture(canvas);
+};
 
 /**
  * Main SkyViewer component that renders the 3D sky scene.
@@ -53,13 +88,23 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     longitude: 0,
   });
   const observerRef = useRef({ latitude: 0, longitude: 0 });
+  const debugOverlayRef = useRef<HTMLDivElement>(null);
+  const [sceneReady, setSceneReady] = useState(false);
+  const lastPlanetFetchTimeRef = useRef<number>(0);
+  
+  const [planetTextures] = useState(() => ({
+    map: createCircleTexture(),
+    glow: createGlowTexture()
+  }));
 
   const { simulationTime } = useSimulationTime();
   const cameraControlRef = useCameraControls(containerRef, cameraRef);
 
   // Ref to access current simulation time inside closures (like event listeners)
   const simulationTimeRef = useRef(simulationTime);
-  useEffect(() => { simulationTimeRef.current = simulationTime; }, [simulationTime]);
+  useEffect(() => { 
+    simulationTimeRef.current = simulationTime; 
+  }, [simulationTime]);
 
   /**
    * Moves the camera to look at a specific target (star or planet).
@@ -114,6 +159,8 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   }), [navigateToTarget]);
 
   useEffect(() => {
+    let cleanup: (() => void) | undefined;
+
     /**
      * Initializes the THREE.js scene, camera, renderer, and objects.
      * Loads star data and sets up event listeners.
@@ -185,86 +232,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         celestialGroup.add(planetGroup);
         planetGroupRef.current = planetGroup;
 
-        // Helper to create a fallback circle texture
-        const createCircleTexture = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 64;
-          canvas.height = 64;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.beginPath();
-            ctx.arc(32, 32, 28, 0, 2 * Math.PI);
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-          }
-          return new THREE.CanvasTexture(canvas);
-        };
-        const fallbackTexture = createCircleTexture();
-
-        const createGlowTexture = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 32;
-          canvas.height = 32;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-            gradient.addColorStop(0.15, 'rgba(255, 255, 255, 1)');
-            gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
-            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.3)');
-            gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.1)');
-            gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, 32, 32);
-          }
-          return new THREE.CanvasTexture(canvas);
-        };
-        const glowTexture = createGlowTexture();
-
-        planets.forEach((planet) => {
-          const planetContainer = new THREE.Group();
-
-          // Mix planet color with white to make it paler
-          const planetColor = new THREE.Color(planet.color);
-          planetColor.lerp(new THREE.Color(0xffffff), 0.6);
-
-          // Use Sprite for 2D images to ensure they are visible and not distorted
-          const material = new THREE.SpriteMaterial({ 
-            map: fallbackTexture,
-            color: planetColor,
-            transparent: true,
-            depthTest: false,
-            depthWrite: false,
-          });
-
-          const sprite = new THREE.Sprite(material);
-          sprite.renderOrder = 999;
-          sprite.userData = { isPlanet: true };
-          
-          // Scale sprite based on planet size. 
-          // Adjusted multiplier for visibility.
-          const scale = 4.0 * planet.size; 
-          sprite.scale.set(scale, scale, 1);
-          
-          planetContainer.add(sprite);
-
-          const glowMaterial = new THREE.SpriteMaterial({
-            map: glowTexture,
-            color: planetColor,
-            transparent: true,
-            opacity: 0.6,
-            depthTest: false,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
-          });
-          const glowSprite = new THREE.Sprite(glowMaterial);
-          const glowScale = scale * 4.0;
-          glowSprite.scale.set(glowScale, glowScale, 1);
-          planetContainer.add(glowSprite);
-
-          planetGroup.add(planetContainer);
-        });
-
         stars.forEach((star) => {
           starsByNameRef.current.set(star.display_name.toLowerCase(), star);
         });
@@ -309,7 +276,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           }
 
           const material = new THREE.SpriteMaterial({
-            map: fallbackTexture,
+            map: planetTextures.map,
             color: color,
             transparent: true,
             depthTest: false,
@@ -326,7 +293,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           const scale = magnitudeToSize(magnitude) * 6.0;
 
           const glowMaterial = new THREE.SpriteMaterial({
-            map: glowTexture,
+            map: planetTextures.glow,
             color: color,
             transparent: true,
             opacity: 0.5,
@@ -372,6 +339,8 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
         containerRef.current.addEventListener('mousemove', handleMouseMove);
 
+        setSceneReady(true);
+
         /**
          * Animation loop for rendering the scene.
          */
@@ -407,9 +376,10 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           }
           
           // Update Sky Rotation
+          let currentLST = 0;
           if (celestialGroupRef.current) {
-            const lst = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
-            const rotationAngle = THREE.MathUtils.degToRad(-lst);
+            currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
+            const rotationAngle = THREE.MathUtils.degToRad(-currentLST);
             celestialGroupRef.current.rotation.y = rotationAngle;
 
             // Apply Latitude Tilt
@@ -417,14 +387,26 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
             celestialGroupRef.current.rotation.x = latitudeTilt;
           }
 
-          // Perform Raycasting in the animation loop to ensure it stays synced with rotation
-          if (cameraRef.current) {
-            // Update matrices for raycasting
-            cameraRef.current.updateMatrixWorld();
-            if (celestialGroupRef.current) {
-              celestialGroupRef.current.updateMatrixWorld(true);
-            }
+          // Update Debug Overlay
+          if (debugOverlayRef.current) {
+            const timeStr = simulationTimeRef.current.toLocaleTimeString();
+            const dateStr = simulationTimeRef.current.toLocaleDateString();
+            const rotY = celestialGroupRef.current?.rotation.y.toFixed(3) ?? '0.000';
+            
+            debugOverlayRef.current.innerText = 
+              `DEBUG:\n` +
+              `Time: ${dateStr} ${timeStr}\n` +
+              `LST: ${currentLST.toFixed(2)}°\n` +
+              `RotY: ${rotY}\n` +
+              `Lat: ${observerRef.current.latitude.toFixed(2)}\n` +
+              `Lon: ${observerRef.current.longitude.toFixed(2)}`;
+          }
 
+          if (cameraRef.current) {
+            // Render first to ensure matrices are updated
+            renderer.render(scene, cameraRef.current);
+
+            // Perform Raycasting using the updated matrices
             raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
             
             let planetHovered = false;
@@ -531,36 +513,54 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
             }
           }
 
-          // Update Planets
-          if (planetGroupRef.current && planetsRef.current.length > 0) {
-            const radius = 500; // Place planets inside the sky sphere
-
-            planetGroupRef.current.children.forEach((child, i) => {
-              if (i >= planetsRef.current.length) return;
-              const planet = planetsRef.current[i];
-              
-              // Position planet using RA/Dec in the celestial frame
-              const raRad = THREE.MathUtils.degToRad(planet.ra);
-              const decRad = THREE.MathUtils.degToRad(planet.dec);
-              const cosDec = Math.cos(decRad);
-
-              child.position.set(
-                radius * cosDec * Math.sin(raRad),
-                radius * Math.sin(decRad),
-                radius * cosDec * Math.cos(raRad)
-              );
-            });
-          }
-
-          renderer.render(scene, cameraRef.current!);
           requestAnimationFrame(animate);
         };
 
         animate();
 
-        return () => {
+        // DEBUG: Click handler to debug raycasting
+        const handleClick = (event: MouseEvent) => {
+          if (!containerRef.current || !cameraRef.current || !celestialGroupRef.current) return;
+
+          console.group('SkyViewer Debug Click');
+          const rect = containerRef.current.getBoundingClientRect();
+          console.log('Container Rect:', rect.width, rect.height);
+          console.log('Mouse Client:', event.clientX, event.clientY);
+          
+          // Recalculate NDC to verify
+          const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+          const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+          console.log('Mouse NDC (calculated):', ndcX, ndcY);
+          console.log('Mouse NDC (ref):', mouseRef.current.x, mouseRef.current.y);
+
+          // Visual debug: Add arrow for ray
+          raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+          const arrow = new THREE.ArrowHelper(
+            raycasterRef.current.ray.direction,
+            raycasterRef.current.ray.origin,
+            100,
+            0xff0000
+          );
+          scene.add(arrow);
+          setTimeout(() => scene.remove(arrow), 2000);
+
+          // Check intersections
+          const intersects = raycasterRef.current.intersectObjects(celestialGroupRef.current.children, true);
+          console.log('Intersections:', intersects.length);
+          if (intersects.length > 0) {
+            console.log('First Hit:', intersects[0]);
+            console.log('Hit Object UserData:', intersects[0].object.userData);
+          } else {
+            console.log('No hit detected.');
+          }
+          console.groupEnd();
+        };
+        containerRef.current.addEventListener('click', handleClick);
+
+        cleanup = () => {
           window.removeEventListener('resize', handleResize);
           containerRef.current?.removeEventListener('mousemove', handleMouseMove);
+          containerRef.current?.removeEventListener('click', handleClick);
           renderer.dispose();
           skySphere.geometry.dispose();
           (skySphere.material as THREE.Material).dispose();
@@ -587,8 +587,134 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     };
 
     initScene();
+    return () => {
+      if (cleanup) cleanup();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Update planets when time changes
+  useEffect(() => {
+    if (!sceneReady) return;
+
+    const now = Date.now();
+    // Throttle API calls to prevent ERR_INSUFFICIENT_RESOURCES
+    if (now - lastPlanetFetchTimeRef.current < 2000) {
+      return;
+    }
+    lastPlanetFetchTimeRef.current = now;
+
+    let active = true;
+    const updatePlanets = async () => {
+      if (!planetGroupRef.current) return;
+
+      // Fetch planets for the new time
+      // We cast fetchPlanets to any because we assume it might accept a date, 
+      // or if not, we are just re-fetching. If it doesn't accept date, 
+      // orbital motion won't update correctly without modifying planetData.ts
+      const planets = await (fetchPlanets as any)(observer.latitude, observer.longitude, simulationTime);
+      
+      if (!active) return;
+
+      planetsRef.current = planets;
+
+      const planetGroup = planetGroupRef.current;
+      const radius = 500;
+      
+      // Map existing planets by name for reuse
+      const existingPlanets = new Map<string, THREE.Group>();
+      planetGroup.children.forEach((child) => {
+        if (child.userData.planetName) {
+          existingPlanets.set(child.userData.planetName, child as THREE.Group);
+        }
+      });
+
+      const currentPlanetNames = new Set<string>();
+
+      planets.forEach((planet: Planet) => {
+        currentPlanetNames.add(planet.name);
+        let planetContainer = existingPlanets.get(planet.name);
+
+        // Position planet using RA/Dec in the celestial frame
+        const raRad = THREE.MathUtils.degToRad(planet.ra);
+        const decRad = THREE.MathUtils.degToRad(planet.dec);
+        const cosDec = Math.cos(decRad);
+
+        const x = radius * cosDec * Math.sin(raRad);
+        const y = radius * Math.sin(decRad);
+        const z = radius * cosDec * Math.cos(raRad);
+
+        if (!planetContainer) {
+          planetContainer = new THREE.Group();
+          planetContainer.userData.planetName = planet.name;
+
+          const planetColor = new THREE.Color(planet.color);
+          planetColor.lerp(new THREE.Color(0xffffff), 0.6);
+
+          const material = new THREE.SpriteMaterial({
+            map: planetTextures.map,
+            color: planetColor,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+          });
+
+          const sprite = new THREE.Sprite(material);
+          sprite.renderOrder = 999;
+          sprite.userData = { isPlanet: true };
+          
+          const scale = 4.0 * planet.size;
+          sprite.scale.set(scale, scale, 1);
+          planetContainer.add(sprite);
+
+          const glowMaterial = new THREE.SpriteMaterial({
+            map: planetTextures.glow,
+            color: planetColor,
+            transparent: true,
+            opacity: 0.6,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          });
+          const glowSprite = new THREE.Sprite(glowMaterial);
+          const glowScale = scale * 4.0;
+          glowSprite.scale.set(glowScale, glowScale, 1);
+          planetContainer.add(glowSprite);
+
+          planetGroup.add(planetContainer);
+        }
+
+        // Update position
+        planetContainer.position.set(x, y, z);
+
+        // Update scale
+        const scale = 4.0 * planet.size;
+        const sprite = planetContainer.children[0] as THREE.Sprite;
+        if (sprite) sprite.scale.set(scale, scale, 1);
+        
+        const glowSprite = planetContainer.children[1] as THREE.Sprite;
+        if (glowSprite) {
+          const glowScale = scale * 4.0;
+          glowSprite.scale.set(glowScale, glowScale, 1);
+        }
+      });
+
+      // Remove planets that are no longer present
+      existingPlanets.forEach((group, name) => {
+        if (!currentPlanetNames.has(name)) {
+          planetGroup.remove(group);
+          group.children.forEach((child) => {
+            if (child instanceof THREE.Sprite) {
+              child.material.dispose();
+            }
+          });
+        }
+      });
+    };
+
+    updatePlanets();
+    return () => { active = false; };
+  }, [simulationTime, observer, sceneReady, planetTextures]);
 
   useEffect(() => {
     if (searchedStarName) {
@@ -607,9 +733,17 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   }, [searchedStarName, navigateToTarget]);
 
   return (
-    <div className="w-full h-full flex flex-col bg-black overflow-hidden">
+    <div className="w-full h-full flex flex-col bg-black overflow-hidden relative">
       <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
+      
+      {/* Debug Overlay */}
+      <div 
+        ref={debugOverlayRef}
+        className="absolute top-4 left-4 bg-black/60 text-green-400 p-2 rounded font-mono text-xs pointer-events-none z-50 whitespace-pre border border-green-400/30"
+      />
+
       <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
+      <TimeController />
       <HorizonWarning message={belowHorizonWarning} />
     </div>
   );
