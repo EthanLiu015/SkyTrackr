@@ -508,49 +508,9 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
         animate();
 
-        // DEBUG: Click handler to debug raycasting
-        const handleClick = (event: MouseEvent) => {
-          if (!containerRef.current || !cameraRef.current || !celestialGroupRef.current) return;
-
-          console.group('SkyViewer Debug Click');
-          const rect = containerRef.current.getBoundingClientRect();
-          console.log('Container Rect:', rect.width, rect.height);
-          console.log('Mouse Client:', event.clientX, event.clientY);
-          
-          // Recalculate NDC to verify
-          const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-          const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-          console.log('Mouse NDC (calculated):', ndcX, ndcY);
-          console.log('Mouse NDC (ref):', mouseRef.current.x, mouseRef.current.y);
-
-          // Visual debug: Add arrow for ray
-          raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-          const arrow = new THREE.ArrowHelper(
-            raycasterRef.current.ray.direction,
-            raycasterRef.current.ray.origin,
-            100,
-            0xff0000
-          );
-          scene.add(arrow);
-          setTimeout(() => scene.remove(arrow), 2000);
-
-          // Check intersections
-          const intersects = raycasterRef.current.intersectObjects(celestialGroupRef.current.children, true);
-          console.log('Intersections:', intersects.length);
-          if (intersects.length > 0) {
-            console.log('First Hit:', intersects[0]);
-            console.log('Hit Object UserData:', intersects[0].object.userData);
-          } else {
-            console.log('No hit detected.');
-          }
-          console.groupEnd();
-        };
-        containerRef.current.addEventListener('click', handleClick);
-
         cleanup = () => {
           window.removeEventListener('resize', handleResize);
           containerRef.current?.removeEventListener('mousemove', handleMouseMove);
-          containerRef.current?.removeEventListener('click', handleClick);
           renderer.dispose();
           skySphere.geometry.dispose();
           (skySphere.material as THREE.Material).dispose();
