@@ -60,6 +60,29 @@ const createGlowTexture = () => {
   return new THREE.CanvasTexture(canvas);
 };
 
+const createCrosshairTexture = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(64, 64, 40, 0, 2 * Math.PI);
+    ctx.moveTo(64, 10);
+    ctx.lineTo(64, 44);
+    ctx.moveTo(64, 84);
+    ctx.lineTo(64, 118);
+    ctx.moveTo(10, 64);
+    ctx.lineTo(44, 64);
+    ctx.moveTo(84, 64);
+    ctx.lineTo(118, 64);
+    ctx.stroke();
+  }
+  return new THREE.CanvasTexture(canvas);
+};
+
 /**
  * Main SkyViewer component that renders the 3D sky scene.
  * Handles star visualization, camera controls, and user interaction.
@@ -77,6 +100,8 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   const celestialGroupRef = useRef<THREE.Group | null>(null);
   const planetsRef = useRef<Planet[]>([]);
   const planetGroupRef = useRef<THREE.Group | null>(null);
+  const crosshairSpriteRef = useRef<THREE.Sprite | null>(null);
+  const crosshairTargetRef = useRef<{ type: 'star' | 'planet', data: Star | Planet } | null>(null);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
@@ -130,24 +155,30 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     cameraRef.current.updateProjectionMatrix();
   }, [cameraControlRef, observer]);
 
+  const performSearch = useCallback((starName: string) => {
+    const lowerName = starName.trim().toLowerCase();
+    const star = starsByNameRef.current.get(lowerName);
+    if (star) {
+      crosshairTargetRef.current = { type: 'star', data: star };
+      navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
+      return;
+    }
+    
+    const planet = planetsRef.current.find(p => p.name.trim().toLowerCase() === lowerName);
+    if (planet) {
+      crosshairTargetRef.current = { type: 'planet', data: planet };
+      navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
+    }
+  }, [navigateToTarget]);
+
   useImperativeHandle(ref, () => ({
     /**
      * Exposed method to search for a star by name and navigate to it.
      */
     searchForStar: (starName: string) => {
-      const lowerName = starName.trim().toLowerCase();
-      const star = starsByNameRef.current.get(lowerName);
-      if (star) {
-        navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
-        return;
-      }
-      
-      const planet = planetsRef.current.find(p => p.name.trim().toLowerCase() === lowerName);
-      if (planet) {
-        navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
-      }
+      performSearch(starName);
     }
-  }), [navigateToTarget]);
+  }), [performSearch]);
 
   useEffect(() => {
     let active = true;
@@ -208,6 +239,21 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         renderer.setPixelRatio(window.devicePixelRatio);
         containerRef.current.appendChild(renderer.domElement);
         rendererRef.current = renderer;
+
+        // Create Crosshair Sprite
+        const crosshairTexture = createCrosshairTexture();
+        const crosshairMaterial = new THREE.SpriteMaterial({
+          map: crosshairTexture,
+          color: 0x00ff00,
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        });
+        const crosshairSprite = new THREE.Sprite(crosshairMaterial);
+        crosshairSprite.scale.set(40, 40, 1);
+        crosshairSprite.visible = false;
+        scene.add(crosshairSprite);
+        crosshairSpriteRef.current = crosshairSprite;
 
         const textureLoader = new THREE.TextureLoader();
 
@@ -343,6 +389,15 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
         containerRef.current.addEventListener('mousemove', handleMouseMove);
 
+        const handleUserInteraction = () => {
+          crosshairTargetRef.current = null;
+          if (crosshairSpriteRef.current) {
+            crosshairSpriteRef.current.visible = false;
+          }
+        };
+        containerRef.current.addEventListener('mousedown', handleUserInteraction);
+        containerRef.current.addEventListener('touchstart', handleUserInteraction);
+
         setSceneReady(true);
 
         /**
@@ -442,6 +497,34 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
                 child.position.set(x, y, z);
               }
             });
+          }
+
+          // Update Crosshair
+          if (crosshairSpriteRef.current && crosshairTargetRef.current) {
+             const target = crosshairTargetRef.current;
+             let ra = 0, dec = 0;
+             if (target.type === 'star') {
+                 ra = (target.data as Star).RAJ2000;
+                 dec = (target.data as Star).DEJ2000;
+             } else {
+                 ra = (target.data as Planet).ra;
+                 dec = (target.data as Planet).dec;
+             }
+             
+             const altAz = calculateAltAz({ ra, dec }, { lat: observerRef.current.latitude, lon: observerRef.current.longitude }, simulationTimeRef.current);
+             const radius = 480;
+             const altRad = THREE.MathUtils.degToRad(altAz.altitude);
+             const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
+
+             const rPlane = radius * Math.cos(altRad);
+             const x = rPlane * Math.sin(azRad);
+             const y = radius * Math.sin(altRad);
+             const z = -rPlane * Math.cos(azRad);
+             
+             crosshairSpriteRef.current.position.set(x, y, z);
+             crosshairSpriteRef.current.visible = true;
+          } else if (crosshairSpriteRef.current) {
+             crosshairSpriteRef.current.visible = false;
           }
 
           if (cameraRef.current) {
@@ -563,6 +646,12 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         cleanup = () => {
           window.removeEventListener('resize', handleResize);
           containerRef.current?.removeEventListener('mousemove', handleMouseMove);
+          containerRef.current?.removeEventListener('mousedown', handleUserInteraction);
+          containerRef.current?.removeEventListener('touchstart', handleUserInteraction);
+          if (crosshairSpriteRef.current) {
+             crosshairSpriteRef.current.material.dispose();
+             crosshairTexture.dispose();
+          }
           renderer.dispose();
           skySphere.geometry.dispose();
           (skySphere.material as THREE.Material).dispose();
@@ -722,19 +811,9 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
   useEffect(() => {
     if (searchedStarName && sceneReady) {
-      const lowerName = searchedStarName.trim().toLowerCase();
-      const star = starsByNameRef.current.get(lowerName);
-      if (star) {
-        navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
-        return;
-      }
-      
-      const planet = planetsRef.current.find(p => p.name.trim().toLowerCase() === lowerName);
-      if (planet) {
-        navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
-      }
+      performSearch(searchedStarName);
     }
-  }, [searchedStarName, navigateToTarget, sceneReady]);
+  }, [searchedStarName, performSearch, sceneReady]);
 
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden relative">
