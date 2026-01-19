@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, us
 import * as THREE from 'three';
 import { loadStarData, type Star, magnitudeToSize } from '../utils/starDataLoader';
 import { getUserLocation, type UserLocation } from '../utils/geolocation';
-import { calculateAltAz, getLocalSiderealTime } from '../utils/astroUtils';
+import { calculateAltAz, getLocalSiderealTime, getPlanets } from '../utils/astroUtils';
 import { fetchPlanets, type Planet } from './planetData';
 import { useSimulationTime, SimulationTimeProvider } from '../contexts/SimulationTimeContext';
 import { StarInfoBox } from './ui/StarInfoBox';
@@ -546,10 +546,10 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
                     id: -1,
                     display_name: planet.name,
                     constellation: 'Solar System',
-                    magnitude: -2.0,
-                    mag: -2.0,
-                    vmag: -2.0,
-                    Vmag: -2.0,
+                    magnitude: (planet as any).magnitude,
+                    mag: (planet as any).magnitude,
+                    vmag: (planet as any).magnitude,
+                    Vmag: (planet as any).magnitude,
                     color: planet.color,
                     RAJ2000: planet.ra,
                     DEJ2000: planet.dec,
@@ -683,24 +683,12 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   // Update planets when time changes
   useEffect(() => {
     if (!sceneReady) return;
-
-    let active = true;
-    const updatePlanets = async () => {
+    
+    const updatePlanets = () => {
       if (!planetGroupRef.current) return;
-
-      // Fetch planets for the new time
-      let planets: Planet[] = [];
-      try {
-        // We cast fetchPlanets to any because we assume it might accept a date, 
-        // or if not, we are just re-fetching. If it doesn't accept date, 
-        // orbital motion won't update correctly without modifying planetData.ts
-        planets = await (fetchPlanets as any)(observer.latitude, observer.longitude, simulationTimeRef.current);
-      } catch (error) {
-        console.error("Failed to fetch planets:", error);
-        return;
-      }
       
-      if (!active) return;
+      // Calculate planet positions locally
+      const planets = getPlanets(simulationTimeRef.current);
 
       planetsRef.current = planets;
 
@@ -727,7 +715,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         let planetContainer = existingPlanets.get(planet.name);
 
         // Position planet using Alt/Az
-        const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observer.latitude, lon: observer.longitude }, simulationTimeRef.current);
+        const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observerRef.current.latitude, lon: observerRef.current.longitude }, simulationTimeRef.current);
         const altRad = THREE.MathUtils.degToRad(altAz.altitude);
         const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
 
@@ -754,7 +742,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           const sprite = new THREE.Sprite(material);
           sprite.userData = { isPlanet: true };
           
-          const scale = 4.0 * planet.size;
+          const scale = magnitudeToSize((planet as any).magnitude) * 6.0;
           sprite.scale.set(scale, scale, 1);
           planetContainer.add(sprite);
 
@@ -779,7 +767,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         planetContainer.position.set(x, y, z);
 
         // Update scale
-        const scale = 4.0 * planet.size;
+        const scale = magnitudeToSize((planet as any).magnitude) * 6.0;
         const sprite = planetContainer.children[0] as THREE.Sprite;
         if (sprite) sprite.scale.set(scale, scale, 1);
         
@@ -807,7 +795,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     const interval = setInterval(updatePlanets, 2000);
 
     return () => { 
-      active = false; 
       clearInterval(interval);
     };
   }, [observer, sceneReady, planetTextures, onStarDataLoaded]);
