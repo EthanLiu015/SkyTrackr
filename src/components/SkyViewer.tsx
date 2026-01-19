@@ -46,6 +46,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
   const [hoveredStarAltAz, setHoveredStarAltAz] = useState<StarAltAz | null>(null);
+  const hoveredStarRef = useRef<Star | null>(null);
   const [belowHorizonWarning, setBelowHorizonWarning] = useState<string | null>(null);
   const [observer, setObserver] = useState({
     latitude: 0,
@@ -363,114 +364,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           const rect = containerRef.current.getBoundingClientRect();
           mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
           mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-          if (cameraRef.current) {
-            // Ensure matrices are updated before raycasting to fix hover drift
-            if (celestialGroupRef.current) {
-              celestialGroupRef.current.updateMatrixWorld(true);
-            }
-            cameraRef.current.updateMatrixWorld();
-
-            raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-            
-            // Check planets first
-            let planetHovered = false;
-            if (planetGroupRef.current) {
-              const intersects = raycasterRef.current.intersectObjects(planetGroupRef.current.children, true);
-              const hit = intersects.find(intersect => intersect.object.userData.isPlanet);
-              if (hit) {
-                const planetContainer = hit.object.parent;
-                const index = planetContainer ? planetGroupRef.current.children.indexOf(planetContainer) : -1;
-                if (index !== -1 && planetsRef.current[index]) {
-                  const planet = planetsRef.current[index];
-                  const planetStar = {
-                    id: -1,
-                    display_name: planet.name,
-                    constellation: 'Solar System',
-                    magnitude: -2.0, // Planets are generally bright
-                    mag: -2.0,
-                    vmag: -2.0,
-                    Vmag: -2.0,
-                    color: planet.color,
-                    RAJ2000: planet.ra,
-                    DEJ2000: planet.dec,
-                    ra: planet.ra,
-                    dec: planet.dec,
-                    dist_ly: 0,
-                    dist: 0,
-                    spectral_type: 'Planet',
-                    proper_name: planet.name,
-                    bf_designation: '',
-                    abs_mag: 0,
-                    ci: 0,
-                    vx: 0,
-                    vy: 0,
-                    vz: 0,
-                    x: 0,
-                    y: 0,
-                    z: 0,
-                    rv: 0,
-                    pmra: 0,
-                    pmdec: 0,
-                    lum: 0,
-                    parallax: 0,
-                    distance: 0,
-                    radial_velocity: 0,
-                    // Additional properties to prevent crashes
-                    temperature: 0,
-                    mass: 0,
-                    radius: 0,
-                    rarad: 0,
-                    decrad: 0,
-                    bayer: '',
-                    flamsteed: '',
-                    con: '',
-                    comp: 0,
-                    base: '',
-                    var: '',
-                    var_min: 0,
-                    var_max: 0,
-                    hip: 0,
-                    hd: 0,
-                    hr: 0,
-                    gl: '',
-                  } as unknown as Star;
-
-                  const altAz = calculateAltAz(
-                    { ra: planet.ra, dec: planet.dec },
-                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
-                    simulationTimeRef.current
-                  );
-
-                  setHoveredStar(planetStar);
-                  setHoveredStarAltAz(altAz);
-                  planetHovered = true;
-                }
-              }
-            }
-
-            if (!planetHovered && starSpriteGroupRef.current) {
-              const intersects = raycasterRef.current.intersectObjects(starSpriteGroupRef.current.children);
-
-              const hit = intersects.find(intersect => intersect.object.userData && intersect.object.userData.star);
-
-              if (hit) {
-                const { star, index } = hit.object.userData;
-                if (star) {
-                  const altAz = calculateAltAz(
-                    { ra: star.RAJ2000, dec: star.DEJ2000 },
-                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
-                    simulationTimeRef.current
-                  );
-                  setHoveredStar(star);
-                  setHoveredStarAltAz(altAz);
-                }
-              } else {
-                setHoveredStar(null);
-                setHoveredStarAltAz(null);
-              }
-            } 
-          }
         };
 
         containerRef.current.addEventListener('mousemove', handleMouseMove);
@@ -503,6 +396,120 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
             // Apply Latitude Tilt
             const latitudeTilt = THREE.MathUtils.degToRad(observerRef.current.latitude - 90);
             celestialGroupRef.current.rotation.x = latitudeTilt;
+          }
+
+          // Perform Raycasting in the animation loop to ensure it stays synced with rotation
+          if (cameraRef.current) {
+            // Update matrices for raycasting
+            cameraRef.current.updateMatrixWorld();
+            if (celestialGroupRef.current) {
+              celestialGroupRef.current.updateMatrixWorld(true);
+            }
+
+            raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+            
+            let planetHovered = false;
+            let newHoveredStar: Star | null = null;
+            let newHoveredAltAz: StarAltAz | null = null;
+
+            // Check planets
+            if (planetGroupRef.current) {
+              const intersects = raycasterRef.current.intersectObjects(planetGroupRef.current.children, true);
+              const hit = intersects.find(intersect => intersect.object.userData.isPlanet);
+              if (hit) {
+                const planetContainer = hit.object.parent;
+                const index = planetContainer ? planetGroupRef.current.children.indexOf(planetContainer) : -1;
+                if (index !== -1 && planetsRef.current[index]) {
+                  const planet = planetsRef.current[index];
+                  newHoveredStar = {
+                    id: -1,
+                    display_name: planet.name,
+                    constellation: 'Solar System',
+                    magnitude: -2.0,
+                    mag: -2.0,
+                    vmag: -2.0,
+                    Vmag: -2.0,
+                    color: planet.color,
+                    RAJ2000: planet.ra,
+                    DEJ2000: planet.dec,
+                    ra: planet.ra,
+                    dec: planet.dec,
+                    dist_ly: 0,
+                    dist: 0,
+                    spectral_type: 'Planet',
+                    proper_name: planet.name,
+                    bf_designation: '',
+                    abs_mag: 0,
+                    ci: 0,
+                    vx: 0,
+                    vy: 0,
+                    vz: 0,
+                    x: 0,
+                    y: 0,
+                    z: 0,
+                    rv: 0,
+                    pmra: 0,
+                    pmdec: 0,
+                    lum: 0,
+                    parallax: 0,
+                    distance: 0,
+                    radial_velocity: 0,
+                    temperature: 0,
+                    mass: 0,
+                    radius: 0,
+                    rarad: 0,
+                    decrad: 0,
+                    bayer: '',
+                    flamsteed: '',
+                    con: '',
+                    comp: 0,
+                    base: '',
+                    var: '',
+                    var_min: 0,
+                    var_max: 0,
+                    hip: 0,
+                    hd: 0,
+                    hr: 0,
+                    gl: '',
+                  } as unknown as Star;
+
+                  newHoveredAltAz = calculateAltAz(
+                    { ra: planet.ra, dec: planet.dec },
+                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
+                    simulationTimeRef.current
+                  );
+                  planetHovered = true;
+                }
+              }
+            }
+
+            // Check stars if no planet hovered
+            if (!planetHovered && starSpriteGroupRef.current) {
+              const intersects = raycasterRef.current.intersectObjects(starSpriteGroupRef.current.children);
+              const hit = intersects.find(intersect => intersect.object.userData && intersect.object.userData.star);
+
+              if (hit) {
+                const { star } = hit.object.userData;
+                if (star) {
+                  newHoveredStar = star;
+                  newHoveredAltAz = calculateAltAz(
+                    { ra: star.RAJ2000, dec: star.DEJ2000 },
+                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
+                    simulationTimeRef.current
+                  );
+                }
+              }
+            }
+
+            // Update state only if changed
+            if (newHoveredStar !== hoveredStarRef.current) {
+              hoveredStarRef.current = newHoveredStar;
+              setHoveredStar(newHoveredStar);
+              setHoveredStarAltAz(newHoveredAltAz);
+            } else if (newHoveredStar && newHoveredAltAz) {
+               // If still hovering the same star, update AltAz as time passes
+               setHoveredStarAltAz(newHoveredAltAz);
+            }
           }
 
           // Update Planets
