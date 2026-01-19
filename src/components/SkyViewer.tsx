@@ -117,12 +117,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
       simulationTimeRef.current
     );
 
-    if (altAz.altitude <= 0) {
-      setBelowHorizonWarning(`${target.name} is below the horizon right now.`);
-      setTimeout(() => setBelowHorizonWarning(null), 5000);
-      return;
-    }
-    
     setBelowHorizonWarning(null);
     
     const altRad = (altAz.altitude * Math.PI) / 180;
@@ -141,14 +135,14 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
      * Exposed method to search for a star by name and navigate to it.
      */
     searchForStar: (starName: string) => {
-      const lowerName = starName.toLowerCase();
+      const lowerName = starName.trim().toLowerCase();
       const star = starsByNameRef.current.get(lowerName);
       if (star) {
         navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
         return;
       }
       
-      const planet = planetsRef.current.find(p => p.name.toLowerCase() === lowerName);
+      const planet = planetsRef.current.find(p => p.name.trim().toLowerCase() === lowerName);
       if (planet) {
         navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
       }
@@ -228,6 +222,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         // Create a Celestial Group to hold stars and planets
         // This group will be rotated to simulate sky rotation
         const celestialGroup = new THREE.Group();
+        celestialGroup.rotation.order = 'YXZ';
         scene.add(celestialGroup);
         celestialGroupRef.current = celestialGroup;
 
@@ -237,7 +232,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         planetGroupRef.current = planetGroup;
 
         stars.forEach((star) => {
-          starsByNameRef.current.set(star.display_name.toLowerCase(), star);
+          starsByNameRef.current.set(star.display_name.trim().toLowerCase(), star);
         });
 
         const { starMesh } = createStarField(stars, observerCoords, now, starsRef, starAltAzRef);
@@ -666,20 +661,20 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   }, [simulationTime, observer, sceneReady, planetTextures]);
 
   useEffect(() => {
-    if (searchedStarName) {
-      const lowerName = searchedStarName.toLowerCase();
+    if (searchedStarName && sceneReady) {
+      const lowerName = searchedStarName.trim().toLowerCase();
       const star = starsByNameRef.current.get(lowerName);
       if (star) {
         navigateToTarget({ ra: star.RAJ2000, dec: star.DEJ2000, name: star.display_name });
         return;
       }
       
-      const planet = planetsRef.current.find(p => p.name.toLowerCase() === lowerName);
+      const planet = planetsRef.current.find(p => p.name.trim().toLowerCase() === lowerName);
       if (planet) {
         navigateToTarget({ ra: planet.ra, dec: planet.dec, name: planet.name });
       }
     }
-  }, [searchedStarName, navigateToTarget]);
+  }, [searchedStarName, navigateToTarget, sceneReady]);
 
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden relative">

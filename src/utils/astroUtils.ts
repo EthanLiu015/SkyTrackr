@@ -53,7 +53,8 @@ export function calculateAltAz(
   const { lat, lon } = location;
 
   const lst = getLocalSiderealTime(date, lon);
-  const ha = lst - ra; // Hour Angle in degrees
+  let ha = lst - ra; // Hour Angle in degrees
+  if (ha < 0) ha += 360;
 
   const rad = Math.PI / 180;
   const decRad = dec * rad;
@@ -63,8 +64,8 @@ export function calculateAltAz(
   const sinAlt = Math.sin(decRad) * Math.sin(latRad) + Math.cos(decRad) * Math.cos(latRad) * Math.cos(haRad);
   const altRad = Math.asin(sinAlt);
 
-  const y = -Math.sin(haRad) * Math.cos(decRad);
-  const x = Math.cos(decRad) * Math.sin(latRad) * Math.cos(haRad) - Math.sin(decRad) * Math.cos(latRad);
+  const y = -Math.cos(decRad) * Math.sin(haRad);
+  const x = Math.cos(latRad) * Math.sin(decRad) - Math.sin(latRad) * Math.cos(decRad) * Math.cos(haRad);
 
   let azRad = Math.atan2(y, x);
   let azimuth = azRad / rad;
