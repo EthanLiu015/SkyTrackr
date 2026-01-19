@@ -365,6 +365,12 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
           if (cameraRef.current) {
+            // Ensure matrices are updated before raycasting to fix hover drift
+            if (celestialGroupRef.current) {
+              celestialGroupRef.current.updateMatrixWorld(true);
+            }
+            cameraRef.current.updateMatrixWorld();
+
             raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
             
             // Check planets first
@@ -451,9 +457,13 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
               if (hit) {
                 const { star, index } = hit.object.userData;
                 if (star) {
-                  const altAz = starAltAzRef.current.get(index);
+                  const altAz = calculateAltAz(
+                    { ra: star.RAJ2000, dec: star.DEJ2000 },
+                    { lat: observerRef.current.latitude, lon: observerRef.current.longitude },
+                    simulationTimeRef.current
+                  );
                   setHoveredStar(star);
-                  setHoveredStarAltAz(altAz || null);
+                  setHoveredStarAltAz(altAz);
                 }
               } else {
                 setHoveredStar(null);
@@ -472,11 +482,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           const phi = cameraControlRef.current.phi;
           const theta = cameraControlRef.current.theta;
 
-          const lookAtPoint = new THREE.Vector3(
-            100 * Math.sin(phi) * Math.sin(theta),
-            100 * Math.cos(phi),
-            -100 * Math.sin(phi) * Math.cos(theta)
-          );
+          const lookAtPoint = new THREE.Vector3().setFromSphericalCoords(100, phi, Math.PI - theta);
 
           if (cameraRef.current) {
             cameraRef.current.position.set(0, 1.6, 0);
@@ -495,7 +501,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
             celestialGroupRef.current.rotation.y = rotationAngle;
 
             // Apply Latitude Tilt
-            const latitudeTilt = THREE.MathUtils.degToRad(90 - observerRef.current.latitude);
+            const latitudeTilt = THREE.MathUtils.degToRad(observerRef.current.latitude - 90);
             celestialGroupRef.current.rotation.x = latitudeTilt;
           }
 
