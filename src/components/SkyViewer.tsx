@@ -142,7 +142,11 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         const hemisphereLight = new THREE.HemisphereLight(0x404060, 0x104010, 1.0);
         scene.add(hemisphereLight);
 
-        const ground = createGround();
+        const ground = createGround() as THREE.Mesh;
+        // Enable transparency for fading
+        if (ground.material) {
+          (ground.material as THREE.Material).transparent = true;
+        }
         scene.add(ground);
 
         const width = containerRef.current.clientWidth;
@@ -385,6 +389,21 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
               cameraRef.current.fov = cameraControlRef.current.fov;
               cameraRef.current.updateProjectionMatrix();
             }
+          }
+
+          // Fade ground when looking below horizon
+          const horizonPhi = Math.PI / 2;
+          const fadeRange = THREE.MathUtils.degToRad(60); // Fade out over 60 degrees
+          
+          let groundOpacity = 1.0;
+          if (phi > horizonPhi) {
+            const delta = phi - horizonPhi;
+            groundOpacity = Math.max(0, 1.0 - (delta / fadeRange));
+          }
+          
+          if (ground.material) {
+            (ground.material as THREE.Material).opacity = groundOpacity;
+            ground.visible = groundOpacity > 0;
           }
           
           // Update Sky Rotation
