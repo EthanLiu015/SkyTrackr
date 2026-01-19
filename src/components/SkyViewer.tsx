@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { loadStarData, type Star, magnitudeToSize } from '../utils/starDataLoader';
 import { getUserLocation, type UserLocation } from '../utils/geolocation';
 import { calculateAltAz, getLocalSiderealTime, getPlanets } from '../utils/astroUtils';
-import { fetchPlanets, type Planet } from './planetData';
+import { type Planet } from './planetData';
 import { useSimulationTime, SimulationTimeProvider } from '../contexts/SimulationTimeContext';
 import { StarInfoBox } from './ui/StarInfoBox';
 import { HorizonWarning } from './ui/HorizonWarning';
@@ -11,6 +11,7 @@ import { createSkySphere, createGround, createDirectionalMarkers } from './three
 import { createStarField } from './three/StarrySky';
 import { useCameraControls } from './three/hooks/useCameraControls';
 import { TimeController } from './TimeController';
+import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
 export interface SkyViewerHandles {
   searchForStar: (starName: string) => void;
@@ -102,6 +103,8 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   const planetGroupRef = useRef<THREE.Group | null>(null);
   const crosshairSpriteRef = useRef<THREE.Sprite | null>(null);
   const crosshairTargetRef = useRef<{ type: 'star' | 'planet', data: Star | Planet } | null>(null);
+  const labelRendererRef = useRef<CSS2DRenderer | null>(null);
+  const brightestLabelsRef = useRef<CSS2DObject[]>([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
@@ -250,6 +253,29 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         scene.add(crosshairSprite);
         crosshairSpriteRef.current = crosshairSprite;
 
+        // Setup Label Renderer
+        const labelRenderer = new CSS2DRenderer();
+        labelRenderer.setSize(width, height);
+        labelRenderer.domElement.style.position = 'absolute';
+        labelRenderer.domElement.style.top = '0px';
+        labelRenderer.domElement.style.pointerEvents = 'none';
+        containerRef.current.appendChild(labelRenderer.domElement);
+        labelRendererRef.current = labelRenderer;
+
+        // Create a pool of labels for the brightest objects
+        for (let i = 0; i < 10; i++) {
+          const labelDiv = document.createElement('div');
+          labelDiv.className = 'celestial-label';
+          labelDiv.style.color = 'rgba(255, 255, 255, 0.7)';
+          labelDiv.style.fontSize = '12px';
+          labelDiv.style.textShadow = '0 0 4px black';
+          labelDiv.style.marginTop = '-25px';
+          const label = new CSS2DObject(labelDiv);
+          label.visible = false;
+          scene.add(label);
+          brightestLabelsRef.current.push(label);
+        }
+
         const textureLoader = new THREE.TextureLoader();
 
         const now = new Date();
@@ -395,6 +421,9 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
         setSceneReady(true);
 
+        let lastLabelUpdate = 0;
+        let currentTop10: { name: string; magnitude: number; data: Star | Planet }[] = [];
+
         /**
          * Animation loop for rendering the scene.
          */
@@ -522,9 +551,72 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
              crosshairSpriteRef.current.visible = false;
           }
 
+          // Update labels selection (throttled)
+          const now = Date.now();
+          if (now - lastLabelUpdate > 1000) {
+            lastLabelUpdate = now;
+
+            const allObjects = [
+              ...Array.from(starsByNameRef.current.values()),
+              ...planetsRef.current
+            ];
+
+            const visibleObjects = allObjects.map(obj => {
+              const isStar = 'Vmag' in obj;
+              const ra = isStar ? (obj as Star).RAJ2000 : (obj as Planet).ra;
+              const dec = isStar ? (obj as Star).DEJ2000 : (obj as Planet).dec;
+              const magnitude = isStar ? (obj as Star).Vmag : (obj as any).magnitude;
+              const name = isStar ? (obj as Star).display_name : (obj as Planet).name;
+
+              if (typeof magnitude !== 'number') return null;
+
+              const altAz = calculateAltAz({ ra, dec }, { lat: observerRef.current.latitude, lon: observerRef.current.longitude }, simulationTimeRef.current);
+              if (altAz.altitude <= 0) return null;
+
+              return { name, magnitude, data: obj };
+            }).filter(Boolean) as { name: string; magnitude: number; data: Star | Planet }[];
+
+            visibleObjects.sort((a, b) => a.magnitude - b.magnitude);
+            currentTop10 = visibleObjects.slice(0, 10);
+
+            brightestLabelsRef.current.forEach((label, i) => {
+              if (i < currentTop10.length) {
+                (label.element as HTMLDivElement).textContent = currentTop10[i].name;
+                label.visible = true;
+              } else {
+                label.visible = false;
+              }
+            });
+          }
+
+          // Update label positions every frame
+          currentTop10.forEach((item, i) => {
+             const label = brightestLabelsRef.current[i];
+             if (label && label.visible) {
+                 const obj = item.data;
+                 const isStar = 'Vmag' in obj;
+                 const ra = isStar ? (obj as Star).RAJ2000 : (obj as Planet).ra;
+                 const dec = isStar ? (obj as Star).DEJ2000 : (obj as Planet).dec;
+
+                 const altAz = calculateAltAz({ ra, dec }, { lat: observerRef.current.latitude, lon: observerRef.current.longitude }, simulationTimeRef.current);
+                 
+                 const radius = 500;
+                 const altRad = THREE.MathUtils.degToRad(altAz.altitude);
+                 const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
+
+                 const rPlane = radius * Math.cos(altRad);
+                 const x = rPlane * Math.sin(azRad);
+                 const y = radius * Math.sin(altRad);
+                 const z = -rPlane * Math.cos(azRad);
+
+                 label.position.set(x, y, z);
+             }
+          });
+
           if (cameraRef.current) {
             // Render first to ensure matrices are updated
             renderer.render(scene, cameraRef.current);
+            labelRendererRef.current?.render(scene, cameraRef.current);
 
             // Perform Raycasting using the updated matrices
             raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
@@ -647,6 +739,10 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
              crosshairSpriteRef.current.material.dispose();
              crosshairTexture.dispose();
           }
+          if (labelRendererRef.current) {
+            containerRef.current?.removeChild(labelRendererRef.current.domElement);
+          }
+          brightestLabelsRef.current = [];
           renderer.dispose();
           skySphere.geometry.dispose();
           (skySphere.material as THREE.Material).dispose();

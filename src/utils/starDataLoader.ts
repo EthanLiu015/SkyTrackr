@@ -58,6 +58,6 @@ export function magnitudeToSize(magnitude: number): number {
   // Convert apparent magnitude to point size
   // Brighter stars (lower magnitude) = larger size
   // A non-linear scale that gives more prominence to brighter stars
-  const size = Math.pow(5.0, -magnitude / 3.5);
-  return Math.max(0.08, Math.min(size * 0.8, 5.0)); // Clamp between 0.2 and 6.0
+  const size = Math.pow(7.0, -magnitude / 3.5);
+  return Math.max(0.05, Math.min(size * 0.8, 5.0)); // Clamp between 0.05 and 5.0
 }
