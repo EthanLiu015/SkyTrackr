@@ -88,7 +88,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     longitude: 0,
   });
   const observerRef = useRef({ latitude: 0, longitude: 0 });
-  const debugOverlayRef = useRef<HTMLDivElement>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const lastPlanetFetchTimeRef = useRef<number>(0);
   
@@ -159,6 +158,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   }), [navigateToTarget]);
 
   useEffect(() => {
+    let active = true;
     let cleanup: (() => void) | undefined;
 
     /**
@@ -170,8 +170,14 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
       try {
         const location: UserLocation = await getUserLocation();
+        if (!active) return;
+
         const stars = await loadStarData();
+        if (!active) return;
+
         const planets = await fetchPlanets(location.latitude || 0, location.longitude || 0);
+        if (!active) return;
+
         planetsRef.current = planets;
         onStarDataLoaded?.([...stars.map(star => star.display_name), ...planets.map(p => p.name)]);
         
@@ -376,30 +382,14 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           }
           
           // Update Sky Rotation
-          let currentLST = 0;
           if (celestialGroupRef.current) {
-            currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
+            const currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
             const rotationAngle = THREE.MathUtils.degToRad(-currentLST);
             celestialGroupRef.current.rotation.y = rotationAngle;
 
             // Apply Latitude Tilt
             const latitudeTilt = THREE.MathUtils.degToRad(observerRef.current.latitude - 90);
             celestialGroupRef.current.rotation.x = latitudeTilt;
-          }
-
-          // Update Debug Overlay
-          if (debugOverlayRef.current) {
-            const timeStr = simulationTimeRef.current.toLocaleTimeString();
-            const dateStr = simulationTimeRef.current.toLocaleDateString();
-            const rotY = celestialGroupRef.current?.rotation.y.toFixed(3) ?? '0.000';
-            
-            debugOverlayRef.current.innerText = 
-              `DEBUG:\n` +
-              `Time: ${dateStr} ${timeStr}\n` +
-              `LST: ${currentLST.toFixed(2)}°\n` +
-              `RotY: ${rotY}\n` +
-              `Lat: ${observerRef.current.latitude.toFixed(2)}\n` +
-              `Lon: ${observerRef.current.longitude.toFixed(2)}`;
           }
 
           if (cameraRef.current) {
@@ -588,6 +578,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
     initScene();
     return () => {
+      active = false;
       if (cleanup) cleanup();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -735,12 +726,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden relative">
       <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
-      
-      {/* Debug Overlay */}
-      <div 
-        ref={debugOverlayRef}
-        className="absolute top-4 left-4 bg-black/60 text-green-400 p-2 rounded font-mono text-xs pointer-events-none z-50 whitespace-pre border border-green-400/30"
-      />
 
       <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
       <TimeController />
