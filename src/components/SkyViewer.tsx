@@ -88,7 +88,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     longitude: 0,
   });
   const observerRef = useRef({ latitude: 0, longitude: 0 });
-  const debugOverlayRef = useRef<HTMLDivElement>(null);
   const [sceneReady, setSceneReady] = useState(false);
   const lastPlanetFetchTimeRef = useRef<number>(0);
   
@@ -376,30 +375,14 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           }
           
           // Update Sky Rotation
-          let currentLST = 0;
           if (celestialGroupRef.current) {
-            currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
+            const currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
             const rotationAngle = THREE.MathUtils.degToRad(-currentLST);
             celestialGroupRef.current.rotation.y = rotationAngle;
 
             // Apply Latitude Tilt
             const latitudeTilt = THREE.MathUtils.degToRad(observerRef.current.latitude - 90);
             celestialGroupRef.current.rotation.x = latitudeTilt;
-          }
-
-          // Update Debug Overlay
-          if (debugOverlayRef.current) {
-            const timeStr = simulationTimeRef.current.toLocaleTimeString();
-            const dateStr = simulationTimeRef.current.toLocaleDateString();
-            const rotY = celestialGroupRef.current?.rotation.y.toFixed(3) ?? '0.000';
-            
-            debugOverlayRef.current.innerText = 
-              `DEBUG:\n` +
-              `Time: ${dateStr} ${timeStr}\n` +
-              `LST: ${currentLST.toFixed(2)}°\n` +
-              `RotY: ${rotY}\n` +
-              `Lat: ${observerRef.current.latitude.toFixed(2)}\n` +
-              `Lon: ${observerRef.current.longitude.toFixed(2)}`;
           }
 
           if (cameraRef.current) {
@@ -518,49 +501,9 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
 
         animate();
 
-        // DEBUG: Click handler to debug raycasting
-        const handleClick = (event: MouseEvent) => {
-          if (!containerRef.current || !cameraRef.current || !celestialGroupRef.current) return;
-
-          console.group('SkyViewer Debug Click');
-          const rect = containerRef.current.getBoundingClientRect();
-          console.log('Container Rect:', rect.width, rect.height);
-          console.log('Mouse Client:', event.clientX, event.clientY);
-          
-          // Recalculate NDC to verify
-          const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-          const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-          console.log('Mouse NDC (calculated):', ndcX, ndcY);
-          console.log('Mouse NDC (ref):', mouseRef.current.x, mouseRef.current.y);
-
-          // Visual debug: Add arrow for ray
-          raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-          const arrow = new THREE.ArrowHelper(
-            raycasterRef.current.ray.direction,
-            raycasterRef.current.ray.origin,
-            100,
-            0xff0000
-          );
-          scene.add(arrow);
-          setTimeout(() => scene.remove(arrow), 2000);
-
-          // Check intersections
-          const intersects = raycasterRef.current.intersectObjects(celestialGroupRef.current.children, true);
-          console.log('Intersections:', intersects.length);
-          if (intersects.length > 0) {
-            console.log('First Hit:', intersects[0]);
-            console.log('Hit Object UserData:', intersects[0].object.userData);
-          } else {
-            console.log('No hit detected.');
-          }
-          console.groupEnd();
-        };
-        containerRef.current.addEventListener('click', handleClick);
-
         cleanup = () => {
           window.removeEventListener('resize', handleResize);
           containerRef.current?.removeEventListener('mousemove', handleMouseMove);
-          containerRef.current?.removeEventListener('click', handleClick);
           renderer.dispose();
           skySphere.geometry.dispose();
           (skySphere.material as THREE.Material).dispose();
@@ -735,12 +678,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
   return (
     <div className="w-full h-full flex flex-col bg-black overflow-hidden relative">
       <div ref={containerRef} className="flex-1 relative" style={{ overflow: 'hidden' }}></div>
-      
-      {/* Debug Overlay */}
-      <div 
-        ref={debugOverlayRef}
-        className="absolute top-4 left-4 bg-black/60 text-green-400 p-2 rounded font-mono text-xs pointer-events-none z-50 whitespace-pre border border-green-400/30"
-      />
 
       <StarInfoBox star={hoveredStar} altAz={hoveredStarAltAz} />
       <TimeController />

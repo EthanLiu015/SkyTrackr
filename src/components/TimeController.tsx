@@ -17,7 +17,6 @@ export function TimeController() {
   const minute = simulationTime.getMinutes();
 
   const updateTime = (unit: 'year' | 'month' | 'day' | 'hour' | 'minute', change: number) => {
-    console.log(`[TimeController] Updating ${unit} by ${change}`);
     const newTime = new Date(simulationTime);
     switch (unit) {
       case 'year':
@@ -36,7 +35,6 @@ export function TimeController() {
         newTime.setMinutes(minute + change);
         break;
     }
-    console.log(`[TimeController] New time: ${newTime.toISOString()}`);
     setSimulationTime(newTime);
   };
 
