@@ -134,8 +134,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
     cameraControlRef.current.fov = 30;
     cameraRef.current.fov = 30;
     cameraRef.current.updateProjectionMatrix();
-    
-    console.log(`Navigating to ${target.name}`);
   }, [cameraControlRef, observer]);
 
   useImperativeHandle(ref, () => ({
