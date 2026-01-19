@@ -222,7 +222,6 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         // Create a Celestial Group to hold stars and planets
         // This group will be rotated to simulate sky rotation
         const celestialGroup = new THREE.Group();
-        celestialGroup.rotation.order = 'YXZ';
         scene.add(celestialGroup);
         celestialGroupRef.current = celestialGroup;
 
@@ -247,18 +246,23 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         starSpriteGroupRef.current = starSpriteGroup;
 
         stars.forEach((star, i) => {
-          // Position stars using Equatorial Coordinates (RA/Dec)
-          // We map these to a sphere where Y is the North Celestial Pole
-          const radius = 500;
-          const raRad = THREE.MathUtils.degToRad(star.RAJ2000);
-          const decRad = THREE.MathUtils.degToRad(star.DEJ2000);
+          // Position stars using Horizontal Coordinates (Alt/Az)
+          const altAz = calculateAltAz(
+            { ra: star.RAJ2000, dec: star.DEJ2000 },
+            { lat: latitude, lon: longitude },
+            now
+          );
 
-          // Convert Spherical (RA/Dec) to Cartesian (x, y, z)
-          // In this local space, Y is up (North Pole), X/Z is the Equatorial plane
-          const cosDec = Math.cos(decRad);
-          const x = radius * cosDec * Math.sin(raRad); // East-West component
-          const y = radius * Math.sin(decRad);         // North-South component (Axis)
-          const z = radius * cosDec * Math.cos(raRad); // Projection
+          const radius = 500;
+          const altRad = THREE.MathUtils.degToRad(altAz.altitude);
+          const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
+
+          // Convert Alt/Az to Cartesian (x, y, z)
+          // Y is Up (Zenith), -Z is North, +X is East
+          const rPlane = radius * Math.cos(altRad);
+          const x = rPlane * Math.sin(azRad);
+          const y = radius * Math.sin(altRad);
+          const z = -rPlane * Math.cos(azRad);
 
           // Determine color
           let color = 0xffffff;
@@ -304,6 +308,7 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           glowSprite.position.set(x, y, z);
           const glowScale = scale * 4.0;
           glowSprite.scale.set(glowScale, glowScale, 1);
+          glowSprite.userData = { star, isGlow: true };
           starSpriteGroup.add(glowSprite);
 
           sprite.scale.set(scale, scale, 1);
@@ -375,14 +380,68 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
           }
           
           // Update Sky Rotation
-          if (celestialGroupRef.current) {
-            const currentLST = getLocalSiderealTime(simulationTimeRef.current, observerRef.current.longitude);
-            const rotationAngle = THREE.MathUtils.degToRad(-currentLST);
-            celestialGroupRef.current.rotation.y = rotationAngle;
+          // Instead of rotating the group, we update star positions based on Alt/Az
+          if (starSpriteGroupRef.current) {
+            const lat = observerRef.current.latitude;
+            const lon = observerRef.current.longitude;
+            const time = simulationTimeRef.current;
+            const radius = 500;
 
-            // Apply Latitude Tilt
-            const latitudeTilt = THREE.MathUtils.degToRad(observerRef.current.latitude - 90);
-            celestialGroupRef.current.rotation.x = latitudeTilt;
+            // Calculate LST once per frame
+            const lst = getLocalSiderealTime(time, lon);
+            const latRad = THREE.MathUtils.degToRad(lat);
+            const sinLat = Math.sin(latRad);
+            const cosLat = Math.cos(latRad);
+
+            starSpriteGroupRef.current.children.forEach((child) => {
+              if (child.userData.star) {
+                const star = child.userData.star;
+                const ra = star.RAJ2000;
+                const dec = star.DEJ2000;
+
+                const ha = (lst - ra + 360) % 360;
+                const haRad = THREE.MathUtils.degToRad(ha);
+                const decRad = THREE.MathUtils.degToRad(dec);
+
+                const sinDec = Math.sin(decRad);
+                const cosDec = Math.cos(decRad);
+                const cosHa = Math.cos(haRad);
+                const sinHa = Math.sin(haRad);
+
+                const sinAlt = sinLat * sinDec + cosLat * cosDec * cosHa;
+                const altRad = Math.asin(sinAlt);
+
+                const yVal = -cosDec * sinHa;
+                const xVal = cosLat * sinDec - sinLat * cosDec * cosHa;
+                const azRad = Math.atan2(yVal, xVal);
+
+                const rPlane = radius * Math.cos(altRad);
+                const xPos = rPlane * Math.sin(azRad);
+                const yPos = radius * sinAlt;
+                const zPos = -rPlane * Math.cos(azRad);
+
+                child.position.set(xPos, yPos, zPos);
+              }
+            });
+          }
+
+          // Update Planet Positions in animate loop for smooth rotation
+          if (planetGroupRef.current) {
+            planetGroupRef.current.children.forEach((child) => {
+              const name = child.userData.planetName;
+              const planet = planetsRef.current.find(p => p.name === name);
+              if (planet) {
+                const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observerRef.current.latitude, lon: observerRef.current.longitude }, simulationTimeRef.current);
+                const radius = 500;
+                const altRad = THREE.MathUtils.degToRad(altAz.altitude);
+                const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
+                const rPlane = radius * Math.cos(altRad);
+                const x = rPlane * Math.sin(azRad);
+                const y = radius * Math.sin(altRad);
+                const z = -rPlane * Math.cos(azRad);
+                child.position.set(x, y, z);
+              }
+            });
           }
 
           if (cameraRef.current) {
@@ -579,14 +638,15 @@ const SkyViewerInner = forwardRef<SkyViewerHandles, SkyViewerProps>(function Sky
         currentPlanetNames.add(planet.name);
         let planetContainer = existingPlanets.get(planet.name);
 
-        // Position planet using RA/Dec in the celestial frame
-        const raRad = THREE.MathUtils.degToRad(planet.ra);
-        const decRad = THREE.MathUtils.degToRad(planet.dec);
-        const cosDec = Math.cos(decRad);
+        // Position planet using Alt/Az
+        const altAz = calculateAltAz({ ra: planet.ra, dec: planet.dec }, { lat: observer.latitude, lon: observer.longitude }, simulationTime);
+        const altRad = THREE.MathUtils.degToRad(altAz.altitude);
+        const azRad = THREE.MathUtils.degToRad(altAz.azimuth);
 
-        const x = radius * cosDec * Math.sin(raRad);
-        const y = radius * Math.sin(decRad);
-        const z = radius * cosDec * Math.cos(raRad);
+        const rPlane = radius * Math.cos(altRad);
+        const x = rPlane * Math.sin(azRad);
+        const y = radius * Math.sin(altRad);
+        const z = -rPlane * Math.cos(azRad);
 
         if (!planetContainer) {
           planetContainer = new THREE.Group();
