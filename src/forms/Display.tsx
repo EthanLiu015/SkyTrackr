@@ -18,17 +18,18 @@ export default function Display() {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-black">
       {/* Header containing Menu and Search */}
-      <MenuBar 
-        onMenuClick={() => setSideBarOpen(true)} 
+      <MenuBar
+        onMenuClick={() => setSideBarOpen(true)}
         onSearch={handleSearch}
         availableStars={currentView === "sky" ? availableStarNames : []}
+        currentView={currentView}
       />
-      
+
       <main className="flex-1 overflow-y-auto">
         {currentView === "sky" && <SkyDisplay ref={skyDisplayRef} onStarDataLoaded={setAvailableStarNames} />}
         {currentView === "conditions" && <ConditionsDisplay />}
       </main>
-      
+
       <SideNav open={sideBarOpen} onOpenChange={setSideBarOpen} onNavigate={(view) => {
         setCurrentView(view);
         setSideBarOpen(false);

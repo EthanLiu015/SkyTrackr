@@ -28,7 +28,7 @@ export const SimulationTimeProvider: React.FC<{ children: ReactNode }> = ({ chil
   const updateAnchor = () => {
     const now = Date.now();
     const { baseTime, anchorTime, speed, isPaused } = timeRef.current;
-    
+
     let currentSimTime = baseTime;
     if (!isPaused) {
       currentSimTime += (now - anchorTime) * speed;
